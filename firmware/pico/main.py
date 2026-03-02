@@ -161,20 +161,39 @@ def start_ap_provisioning():
     """
     import machine
 
+    # Ensure STA interface is down to avoid conflicts
+    sta = network.WLAN(network.STA_IF)
+    sta.active(False)
+    sleep(0.5)
+
     ap = network.WLAN(network.AP_IF)
-    ap.active(True)
+    ap.active(False)
+    sleep(0.5)
     ap.config(essid=AP_SSID, password=AP_PASSWORD)
+    ap.active(True)
+    sleep(1)
+
+    # Explicitly set IP so we always know the address
+    ap.ifconfig(('192.168.4.1', '255.255.255.0', '192.168.4.1', '8.8.8.8'))
+    sleep(0.5)
 
     print("AP mode started.")
-    print("  Connect to WiFi:  {}".format(AP_SSID))
-    print("  Password:         {}".format(AP_PASSWORD))
-    print("  Then open:        http://192.168.4.1/")
+    print("  SSID:     {}".format(AP_SSID))
+    print("  Password: {}".format(AP_PASSWORD))
+    print("  IP:       {}".format(ap.ifconfig()[0]))
+    print("  Open:     http://192.168.4.1/")
 
-    addr = socket.getaddrinfo("0.0.0.0", 80)[0][-1]
-    srv = socket.socket()
-    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    srv.bind(addr)
-    srv.listen(3)
+    try:
+        addr = socket.getaddrinfo("192.168.4.1", 80)[0][-1]
+        srv = socket.socket()
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv.bind(addr)
+        srv.listen(3)
+        srv.settimeout(1)
+        print("Provisioning server listening on port 80")
+    except Exception as e:
+        print("Failed to start provisioning server:", e)
+        return
 
     while True:
         try:
@@ -207,6 +226,8 @@ def start_ap_provisioning():
                 http_send(conn, provisioning_html())
 
             conn.close()
+        except OSError:
+            pass  # accept() timed out, loop and wait for next connection
         except Exception as e:
             print("Provisioning error:", e)
 
@@ -372,10 +393,15 @@ def connect_wifi():
         sleep(0.1)
 
     if not wlan.isconnected():
-        print("WiFi connection failed. Starting provisioning mode...")
+        import os, machine
+        print("WiFi connection failed. Clearing config and rebooting into provisioning mode...")
         wlan.active(False)
-        start_ap_provisioning()  # blocks until saved + resets
-        return None, None
+        try:
+            os.remove(CONFIG_FILE)
+        except:
+            pass
+        sleep(1)
+        machine.reset()
 
     ip = wlan.ifconfig()[0]
     print("WiFi connected:", ip)
