@@ -90,7 +90,7 @@ def http_send(conn, body, code="200 OK", content_type="text/html"):
     conn.send("Connection: close\r\n\r\n")
     conn.sendall(body)
 
-def read_http_request(conn, max_bytes=2048):
+def read_http_request(conn, max_bytes=4096):
     conn.settimeout(0.25)
     data = b""
     try:
@@ -103,7 +103,39 @@ def read_http_request(conn, max_bytes=2048):
                 break
     except OSError:
         pass
-    return data.decode("utf-8", "ignore")
+
+    # For POST requests, read the body using Content-Length
+    header_bytes, _, body_bytes = data.partition(b"\r\n\r\n")
+    content_length = 0
+    for line in header_bytes.split(b"\r\n"):
+        if line.lower().startswith(b"content-length:"):
+            try:
+                content_length = int(line.split(b":", 1)[1].strip())
+            except:
+                pass
+
+    while len(body_bytes) < content_length:
+        try:
+            chunk = conn.recv(512)
+            if not chunk:
+                break
+            body_bytes += chunk
+        except OSError:
+            break
+
+    return (header_bytes + b"\r\n\r\n" + body_bytes).decode("utf-8", "ignore")
+
+def parse_form(data):
+    """Parse URL-encoded form data (from query string or POST body)."""
+    params = {}
+    for part in data.split('&'):
+        if '=' in part:
+            k, v = part.split('=', 1)
+            params[k] = url_decode(v)
+        else:
+            if part:
+                params[part] = ""
+    return params
 
 # ----------------------------
 # AP provisioning (runs when no saved credentials or connection fails)
@@ -111,30 +143,15 @@ def read_http_request(conn, max_bytes=2048):
 AP_SSID = "OpenFlap-Setup"
 AP_PASSWORD = "openflap1"
 
+def render_template(filename, **kwargs):
+    with open(filename, "r") as f:
+        html = f.read()
+    for key, value in kwargs.items():
+        html = html.replace("{{" + key + "}}", str(value))
+    return html
+
 def provisioning_html(message=""):
-    return """<!doctype html>
-<html>
-<head>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>OpenFlap WiFi Setup</title>
-  <style>
-    body {{ font-family: sans-serif; max-width: 400px; margin: 40px auto; padding: 0 16px; }}
-    input {{ width: 100%; padding: 10px; margin: 8px 0; border-radius: 8px; border: 1px solid #ccc; box-sizing: border-box; }}
-    button {{ width: 100%; padding: 12px; border-radius: 8px; border: none; background: #0066cc; color: white; font-size: 1em; }}
-    .msg {{ color: #c00; margin-top: 8px; }}
-  </style>
-</head>
-<body>
-  <h2>OpenFlap WiFi Setup</h2>
-  <p>Enter your WiFi credentials. They will be saved to flash memory.</p>
-  <form action="/save" method="get">
-    <input name="ssid" type="text" placeholder="WiFi Network Name (SSID)" required />
-    <input name="password" type="password" placeholder="WiFi Password" />
-    <button type="submit">Save &amp; Connect</button>
-  </form>
-  <div class="msg">{message}</div>
-</body>
-</html>""".format(message=message)
+    return render_template("setup.html", message=message)
 
 def start_ap_provisioning():
     """
@@ -375,58 +392,7 @@ def sync_time():
 # Main web UI
 # ----------------------------
 def html_page(status, mode, last_text):
-    return """<!doctype html>
-<html>
-<head>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Split-Flap Control</title>
-  <style>
-    * {{ box-sizing: border-box; }}
-    body {{ font-family: sans-serif; max-width: 560px; margin: 24px auto; padding: 0 12px; }}
-    .card {{ padding: 16px; border: 1px solid #ddd; border-radius: 12px; margin-bottom: 12px; }}
-    button {{ padding: 12px 14px; margin: 6px 6px 6px 0; border-radius: 10px; border: 1px solid #ccc; }}
-    input[type=text], input[type=password] {{ width: 100%; padding: 12px; border-radius: 10px; border: 1px solid #ccc; }}
-    .status {{ margin-top: 10px; color: #333; }}
-    .small {{ color: #666; font-size: 0.9em; }}
-    .pill {{ display:inline-block; padding:4px 10px; border:1px solid #ccc; border-radius:999px; }}
-  </style>
-</head>
-<body>
-  <h2>Split-Flap Controller</h2>
-  <div class="card">
-    <div class="small">Mode: <span class="pill">{mode}</span></div>
-
-    <form action="/text" method="get" style="margin-top:12px;">
-      <label>Text to display</label>
-      <input name="t" type="text" placeholder="HEY!" maxlength="4" value="{last_text}" />
-      <div style="margin-top:10px;">
-        <button type="submit">Send Text</button>
-      </div>
-    </form>
-
-    <div style="margin-top:14px;">
-      <a href="/mode?m=time"><button>Display Time</button></a>
-      <a href="/mode?m=temp"><button>Display Temperature</button></a>
-      <a href="/8ball"><button>8-Ball</button></a>
-      <a href="/home"><button>Erase Screen</button></a>
-    </div>
-
-    <div class="status">{status}</div>
-  </div>
-
-  <div class="card">
-    <div class="small">WiFi Settings</div>
-    <form action="/wifi" method="get" style="margin-top:12px;">
-      <input name="ssid" type="text" placeholder="New WiFi SSID" />
-      <input name="password" type="password" placeholder="New WiFi Password" style="margin-top:8px;" />
-      <div style="margin-top:10px;">
-        <button type="submit">Update WiFi &amp; Reboot</button>
-      </div>
-    </form>
-  </div>
-</body>
-</html>
-""".format(status=status, mode=mode, last_text=last_text)
+    return render_template("index.html", status=status, mode=mode, last_text=last_text)
 
 def start_server():
     addr = socket.getaddrinfo("0.0.0.0", 80)[0][-1]
@@ -487,50 +453,60 @@ while True:
                 parts = line.split()
                 path = parts[1] if len(parts) >= 2 else "/"
 
-                route, params = parse_query(path)
+                method = parts[0] if parts else "GET"
+                route, _ = parse_query(path)
+
+                # Parse POST body or fall back to query string
+                if method == "POST":
+                    body = req.split("\r\n\r\n", 1)[1] if "\r\n\r\n" in req else ""
+                    params = parse_form(body)
+                else:
+                    _, params = parse_query(path)
 
                 if route == "/":
-                    http_send(conn, html_page(status_line, mode, last_text))
-                elif route == "/text":
-                    t = (params.get("t", "") or "").upper()
-                    if t:
-                        last_text = t
+                    action = params.get("action", "")
+
+                    if action == "text":
+                        t = (params.get("t", "") or "").upper()
+                        if t:
+                            last_text = t
+                            mode = MODE_TEXT
+                            print_string(last_text)
+                            status_line = "Displayed: {}".format(last_text)
+                        else:
+                            status_line = "No text provided."
+
+                    elif action == "mode":
+                        m = params.get("m", "")
+                        if m in (MODE_TIME, MODE_TEMP):
+                            mode = m
+                            status_line = "Switched to {}".format(mode)
+                        else:
+                            status_line = "Unknown mode."
+
+                    elif action == "home":
+                        status_line = "Homing command sent."
+                        home_all()
+
+                    elif action == "8ball":
+                        last_text = eightball_roll()
                         mode = MODE_TEXT
-                        print_string(last_text)
-                        status_line = "Displayed text: {}".format(last_text)
-                    else:
-                        status_line = "No text provided."
+                        status_line = "Shaking..."
+
+                    elif action == "wifi":
+                        import machine
+                        new_ssid = params.get("ssid", "").strip()
+                        new_password = params.get("password", "")
+                        if new_ssid:
+                            save_wifi_config(new_ssid, new_password)
+                            http_send(conn, "<h2>WiFi updated. Rebooting...</h2>")
+                            conn.close()
+                            sleep(1)
+                            machine.reset()
+                        else:
+                            status_line = "SSID cannot be empty."
+
                     http_send(conn, html_page(status_line, mode, last_text))
-                elif route == "/mode":
-                    m = params.get("m", "")
-                    if m in (MODE_TIME, MODE_TEMP):
-                        mode = m
-                        status_line = "Switched mode to {}".format(mode)
-                    else:
-                        status_line = "Unknown mode."
-                    http_send(conn, html_page(status_line, mode, last_text))
-                elif route == "/home":
-                    status_line = "Homing command sent."
-                    http_send(conn, html_page(status_line, mode, last_text))
-                    home_all()
-                elif route == "/8ball":
-                    status_line = "Shaking..."
-                    http_send(conn, html_page(status_line, mode, last_text))
-                    last_text = eightball_roll()
-                    mode = MODE_TEXT
-                elif route == "/wifi":
-                    import machine
-                    new_ssid = params.get("ssid", "").strip()
-                    new_password = params.get("password", "")
-                    if new_ssid:
-                        save_wifi_config(new_ssid, new_password)
-                        http_send(conn, "<h2>WiFi updated. Rebooting...</h2>")
-                        conn.close()
-                        sleep(1)
-                        machine.reset()
-                    else:
-                        status_line = "SSID cannot be empty."
-                        http_send(conn, html_page(status_line, mode, last_text))
                 else:
                     http_send(conn, "Not found", code="404 Not Found", content_type="text/plain")
 
