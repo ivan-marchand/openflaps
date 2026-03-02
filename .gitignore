@@ -1,0 +1,13 @@
+# JetBrains IDE
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# MicroPython credentials (never commit WiFi passwords)
+firmware/pico/wifi_config.json
+
+# macOS
+.DS_Store
