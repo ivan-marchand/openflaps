@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OpenFlap WiFi Setup</title>
+  <style>
+    body { font-family: sans-serif; max-width: 400px; margin: 40px auto; padding: 0 16px; }
+    input { width: 100%; padding: 10px; margin: 8px 0; border-radius: 8px; border: 1px solid #ccc; box-sizing: border-box; }
+    button { width: 100%; padding: 12px; border-radius: 8px; border: none; background: #0066cc; color: white; font-size: 1em; }
+    .msg { color: #c00; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <h2>OpenFlap WiFi Setup</h2>
+  <p>Enter your WiFi credentials. They will be saved to flash memory.</p>
+  <form action="/save" method="get">
+    <input name="ssid" type="text" placeholder="WiFi Network Name (SSID)" required />
+    <input name="password" type="password" placeholder="WiFi Password" />
+    <button type="submit">Save &amp; Connect</button>
+  </form>
+  <div class="msg">{{message}}</div>
+</body>
+</html>
