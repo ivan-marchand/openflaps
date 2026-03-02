@@ -1,0 +1,70 @@
+<!doctype html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Split-Flap Control</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: sans-serif; max-width: 560px; margin: 24px auto; padding: 0 12px; }
+    .card { padding: 16px; border: 1px solid #ddd; border-radius: 12px; margin-bottom: 12px; }
+    button { padding: 12px 14px; margin: 6px 6px 6px 0; border-radius: 10px; border: 1px solid #ccc; cursor: pointer; }
+    input[type=text], input[type=password] { width: 100%; padding: 12px; border-radius: 10px; border: 1px solid #ccc; }
+    .status { margin-top: 10px; color: #333; }
+    .small { color: #666; font-size: 0.9em; }
+    .pill { display:inline-block; padding:4px 10px; border:1px solid #ccc; border-radius:999px; }
+    form { display: inline; }
+  </style>
+</head>
+<body>
+  <h2>Split-Flap Controller</h2>
+  <div class="card">
+    <div class="small">Mode: <span class="pill">{{mode}}</span></div>
+
+    <form action="/" method="post" style="display:block; margin-top:12px;">
+      <input type="hidden" name="action" value="text" />
+      <label>Text to display</label>
+      <input name="t" type="text" placeholder="HEY!" maxlength="4" value="{{last_text}}" />
+      <div style="margin-top:10px;">
+        <button type="submit">Send Text</button>
+      </div>
+    </form>
+
+    <div style="margin-top:14px;">
+      <form action="/" method="post">
+        <input type="hidden" name="action" value="mode" />
+        <input type="hidden" name="m" value="time" />
+        <button type="submit">Display Time</button>
+      </form>
+      <form action="/" method="post">
+        <input type="hidden" name="action" value="mode" />
+        <input type="hidden" name="m" value="temp" />
+        <button type="submit">Display Temperature</button>
+      </form>
+      <form action="/" method="post">
+        <input type="hidden" name="action" value="8ball" />
+        <button type="submit">8-Ball</button>
+      </form>
+      <form action="/" method="post">
+        <input type="hidden" name="action" value="home" />
+        <button type="submit">Erase Screen</button>
+      </form>
+    </div>
+
+    <div class="status">{{status}}</div>
+  </div>
+
+  <div class="card">
+    <button type="button" onclick="var s=document.getElementById('wifi-section');s.style.display=s.style.display==='none'?'block':'none';">WiFi Settings</button>
+    <div id="wifi-section" style="display:none; margin-top:12px;">
+      <form action="/" method="post" style="display:block;">
+        <input type="hidden" name="action" value="wifi" />
+        <input name="ssid" type="text" placeholder="New WiFi SSID" />
+        <input name="password" type="password" placeholder="New WiFi Password" style="margin-top:8px;" />
+        <div style="margin-top:10px;">
+          <button type="submit">Update WiFi &amp; Reboot</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</body>
+</html>
