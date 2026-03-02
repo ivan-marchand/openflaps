@@ -54,15 +54,17 @@
   </div>
 
   <div class="card">
-    <div class="small">WiFi Settings</div>
-    <form action="/" method="post" style="display:block; margin-top:12px;">
-      <input type="hidden" name="action" value="wifi" />
-      <input name="ssid" type="text" placeholder="New WiFi SSID" />
-      <input name="password" type="password" placeholder="New WiFi Password" style="margin-top:8px;" />
-      <div style="margin-top:10px;">
-        <button type="submit">Update WiFi &amp; Reboot</button>
-      </div>
-    </form>
+    <button type="button" onclick="var s=document.getElementById('wifi-section');s.style.display=s.style.display==='none'?'block':'none';">WiFi Settings</button>
+    <div id="wifi-section" style="display:none; margin-top:12px;">
+      <form action="/" method="post" style="display:block;">
+        <input type="hidden" name="action" value="wifi" />
+        <input name="ssid" type="text" placeholder="New WiFi SSID" />
+        <input name="password" type="password" placeholder="New WiFi Password" style="margin-top:8px;" />
+        <div style="margin-top:10px;">
+          <button type="submit">Update WiFi &amp; Reboot</button>
+        </div>
+      </form>
+    </div>
   </div>
 </body>
 </html>
