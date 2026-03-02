@@ -13,6 +13,7 @@ import socket
 import sys
 import ujson
 
+
 # ----------------------------
 # CONFIG
 # ----------------------------
@@ -441,6 +442,7 @@ mode = MODE_TIME
 last_text = ""
 status_line = "Ready."
 minutes = None
+last_temp_update = 0
 
 # ----------------------------
 # Boot
@@ -507,6 +509,8 @@ while True:
                         if m in (MODE_TIME, MODE_TEMP):
                             mode = m
                             status_line = "Switched to {}".format(mode)
+                            if mode == MODE_TEMP:
+                                last_temp_update = 0  # trigger immediate update
                         else:
                             status_line = "Unknown mode."
 
@@ -558,7 +562,8 @@ while True:
                 print_string("{:02d}{:02d}".format(hours, minutes))
 
         elif mode == MODE_TEMP:
-            if int(time.time()) % 60 == 0:
+            if time.time() - last_temp_update >= 60:
+                last_temp_update = time.time()
                 display_web_temp()
 
         # MODE_TEXT: do nothing; it stays until user changes mode
