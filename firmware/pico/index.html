@@ -29,6 +29,15 @@
       </div>
     </form>
 
+    <form action="/" method="post" style="display:block; margin-top:14px;">
+      <input type="hidden" name="action" value="claude" />
+      <label>Ask Claude</label>
+      <input name="prompt" type="text" placeholder="Are you smart?" />
+      <div style="margin-top:10px;">
+        <button type="submit">Ask</button>
+      </div>
+    </form>
+
     <div style="margin-top:14px;">
       <form action="/" method="post">
         <input type="hidden" name="action" value="mode" />
@@ -62,6 +71,19 @@
         <input name="password" type="password" placeholder="New WiFi Password" style="margin-top:8px;" />
         <div style="margin-top:10px;">
           <button type="submit">Update WiFi &amp; Reboot</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card">
+    <button type="button" onclick="var s=document.getElementById('api-section');s.style.display=s.style.display==='none'?'block':'none';">Claude API Key</button>
+    <div id="api-section" style="display:none; margin-top:12px;">
+      <form action="/" method="post" style="display:block;">
+        <input type="hidden" name="action" value="apikey" />
+        <input name="key" type="password" placeholder="sk-ant-..." />
+        <div style="margin-top:10px;">
+          <button type="submit">Save API Key</button>
         </div>
       </form>
     </div>

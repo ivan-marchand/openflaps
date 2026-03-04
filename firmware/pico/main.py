@@ -18,6 +18,7 @@ import ujson
 # CONFIG
 # ----------------------------
 CONFIG_FILE = "wifi_config.json"
+API_CONFIG_FILE = "api_config.json"
 
 UTC_OFFSET_SECONDS = -5 * 3600  # EST (no DST handling)
 
@@ -49,6 +50,22 @@ def save_wifi_config(ssid, password):
         return True
     except Exception as e:
         print("Failed to save config:", e)
+        return False
+
+def load_api_key():
+    try:
+        with open(API_CONFIG_FILE, "r") as f:
+            return ujson.load(f).get("key", "")
+    except:
+        return ""
+
+def save_api_key(key):
+    try:
+        with open(API_CONFIG_FILE, "w") as f:
+            ujson.dump({"key": key}, f)
+        return True
+    except Exception as e:
+        print("Failed to save API key:", e)
         return False
 
 # ----------------------------
@@ -376,6 +393,76 @@ def eightball_roll():
 # ----------------------------
 # Wi-Fi + NTP
 # ----------------------------
+# Claude API
+# ----------------------------
+CLAUDE_SYSTEM = (
+    "You control a 4-character split-flap display. "
+    "Reply with EXACTLY 4 characters using only these characters: "
+    "space A-Z 0-9 . , : - ! ? / degree-sign. "
+    "Pad with spaces if needed. "
+    "Examples: YES  NO   COOL IDK  NOPE 42.0 RAIN SNOW"
+)
+
+def call_claude(prompt):
+    import ssl
+    api_key = load_api_key()
+    if not api_key:
+        print("No Claude API key configured")
+        return "ERR "
+
+    host = "api.anthropic.com"
+    payload = ujson.dumps({
+        "model": "claude-haiku-4-5",
+        "max_tokens": 20,
+        "system": CLAUDE_SYSTEM,
+        "messages": [{"role": "user", "content": prompt}]
+    }).encode("utf-8")  # encode to bytes so Content-Length is correct
+    headers = (
+        "POST /v1/messages HTTP/1.1\r\n"
+        "Host: {}\r\n"
+        "x-api-key: {}\r\n"
+        "anthropic-version: 2023-06-01\r\n"
+        "content-type: application/json\r\n"
+        "content-length: {}\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+    ).format(host, api_key, len(payload))
+
+    try:
+        addr = socket.getaddrinfo(host, 443)[0][-1]
+        raw = socket.socket()
+        raw.settimeout(15)
+        raw.connect(addr)
+        sock = ssl.wrap_socket(raw, server_hostname=host)
+        sock.write(headers.encode("utf-8") + payload)
+
+        response = b""
+        while True:
+            try:
+                chunk = sock.read(1024)
+                if not chunk:
+                    break
+                response += chunk
+            except OSError:
+                break
+        sock.close()
+
+        _, _, body = response.partition(b"\r\n\r\n")
+        body = dechunk_http_body(body)
+        data = ujson.loads(body)
+
+        if "content" in data and data["content"]:
+            text = data["content"][0]["text"].upper()
+            allowed = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:-!?/\xb0"
+            text = "".join(c for c in text if c in allowed)
+            return (text + "    ")[:4]
+        print("Claude error:", data)
+        return "ERR "
+    except Exception as e:
+        print("Claude API error:", e)
+        return "ERR "
+
+# ----------------------------
 def connect_wifi():
     ssid, password = load_wifi_config()
 
@@ -392,17 +479,6 @@ def connect_wifi():
         if wlan.isconnected():
             break
         sleep(0.1)
-
-    if not wlan.isconnected():
-        import os, machine
-        print("WiFi connection failed. Clearing config and rebooting into provisioning mode...")
-        wlan.active(False)
-        try:
-            os.remove(CONFIG_FILE)
-        except:
-            pass
-        sleep(1)
-        machine.reset()
 
     ip = wlan.ifconfig()[0]
     print("WiFi connected:", ip)
@@ -535,6 +611,29 @@ while True:
                             machine.reset()
                         else:
                             status_line = "SSID cannot be empty."
+
+                    elif action == "claude":
+                        prompt = params.get("prompt", "").strip()
+                        if prompt:
+                            status_line = "Asking Claude..."
+                            http_send(conn, html_page(status_line, mode, last_text))
+                            conn.close()
+                            result = call_claude(prompt)
+                            last_text = result
+                            mode = MODE_TEXT
+                            print_string(last_text)
+                            status_line = "Claude: {}".format(last_text)
+                            continue
+                        else:
+                            status_line = "No prompt provided."
+
+                    elif action == "apikey":
+                        key = params.get("key", "").strip()
+                        if key:
+                            save_api_key(key)
+                            status_line = "API key saved."
+                        else:
+                            status_line = "API key cannot be empty."
 
                     http_send(conn, html_page(status_line, mode, last_text))
                 else:
