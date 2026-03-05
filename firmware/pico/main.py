@@ -325,7 +325,7 @@ def display_web_temp():
 
     temp = 32 + temp * 9/5
     t = int(round(temp))
-    txt = "{:2d}F".format(t)
+    txt = "{:2d}°F".format(t)
     print_string(txt[:4])
 
 # ----------------------------
@@ -350,16 +350,27 @@ def initialize_displays():
         try:
             i2c.writeto(address, b'I\x00')
         except:
-            print(f"Unable Initialize display {address}")
+            print(f"Unable to Initialize display {address}")
+
+def display_address():
+    for address in i2c.scan():
+        try:
+            i2c.writeto(address, b'A\x00')
+        except:
+            print(f"Unable to Display {address}")
 
 def print_char(address: int, c: str):
     try:
-        b = ord(c[0].upper())
+        if c == "°":
+            b = 0xb0
+        else:
+            b = ord(c[0].upper())
         i2c.writeto(address, bytes([ord('D'), b]))
     except:
         print(f"Unable to send char to {hex(address)}")
 
 def print_string(s: str):
+    print(f"Displaying: {s}")
     addresses = i2c.scan()
     address = BASE_ADDR
     while address in addresses:
@@ -488,8 +499,8 @@ def sync_time():
     try:
         ntptime.settime()
         print("Time set via NTP")
-    except:
-        print("Error syncing time")
+    except Exception as e:
+        print("Error syncing time", e)
 
 # ----------------------------
 # Main web UI
@@ -533,6 +544,7 @@ wlan, ip = connect_wifi()
 sync_time()
 
 #initialize_displays()
+#display_address()
 
 server = start_server()
 
