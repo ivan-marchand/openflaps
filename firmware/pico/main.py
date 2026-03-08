@@ -108,6 +108,13 @@ def http_send(conn, body, code="200 OK", content_type="text/html"):
     conn.send("Connection: close\r\n\r\n")
     conn.sendall(body)
 
+def http_send_json(conn, data, code="200 OK"):
+    body = ujson.dumps(data)
+    conn.send("HTTP/1.1 {}\r\n".format(code))
+    conn.send("Content-Type: application/json\r\n")
+    conn.send("Connection: close\r\n\r\n")
+    conn.sendall(body)
+
 def read_http_request(conn, max_bytes=4096):
     conn.settimeout(0.25)
     data = b""
@@ -154,6 +161,17 @@ def parse_form(data):
             if part:
                 params[part] = ""
     return params
+
+def parse_json_body(req):
+    if "\r\n\r\n" not in req:
+        return {}
+    body = req.split("\r\n\r\n", 1)[1].strip()
+    if not body:
+        return {}
+    try:
+        return ujson.loads(body)
+    except:
+        return {}
 
 # ----------------------------
 # AP provisioning (runs when no saved credentials or connection fails)
@@ -585,7 +603,89 @@ while True:
                 else:
                     _, params = parse_query(path)
 
-                if route == "/":
+                if route == "/api/state":
+                    http_send_json(conn, {
+                        "mode": mode,
+                        "text": last_text,
+                        "status": status_line,
+                    })
+
+                elif route == "/api/text" and method == "POST":
+                    data = parse_json_body(req)
+                    t = (data.get("text", "") or "").upper()
+                    if t:
+                        last_text = t
+                        mode = MODE_TEXT
+                        print_string(last_text)
+                        status_line = "Displayed: {}".format(last_text)
+                        http_send_json(conn, {"ok": True, "status": status_line})
+                    else:
+                        http_send_json(conn, {"ok": False, "error": "No text provided."}, code="400 Bad Request")
+
+                elif route == "/api/mode" and method == "POST":
+                    data = parse_json_body(req)
+                    m = data.get("mode", "")
+                    if m in (MODE_TIME, MODE_TEMP):
+                        mode = m
+                        status_line = "Switched to {}".format(mode)
+                        if mode == MODE_TEMP:
+                            last_temp_update = 0
+                        http_send_json(conn, {"ok": True, "status": status_line})
+                    else:
+                        http_send_json(conn, {"ok": False, "error": "Unknown mode."}, code="400 Bad Request")
+
+                elif route == "/api/8ball" and method == "POST":
+                    last_text = eightball_roll()
+                    mode = MODE_TEXT
+                    status_line = "Shaking..."
+                    http_send_json(conn, {"ok": True, "text": last_text, "status": status_line})
+
+                elif route == "/api/home" and method == "POST":
+                    home_all()
+                    status_line = "Homing..."
+                    http_send_json(conn, {"ok": True, "status": status_line})
+
+                elif route == "/api/claude" and method == "POST":
+                    data = parse_json_body(req)
+                    prompt = data.get("prompt", "").strip()
+                    if prompt:
+                        status_line = "Asking Claude..."
+                        http_send_json(conn, {"ok": True, "status": status_line})
+                        conn.close()
+                        conn = None
+                        result = call_claude(prompt)
+                        last_text = result
+                        mode = MODE_TEXT
+                        print_string(last_text)
+                        status_line = "Claude: {}".format(last_text)
+                    else:
+                        http_send_json(conn, {"ok": False, "error": "No prompt provided."}, code="400 Bad Request")
+
+                elif route == "/api/setup/wifi" and method == "POST":
+                    import machine
+                    data = parse_json_body(req)
+                    new_ssid = data.get("ssid", "").strip()
+                    new_password = data.get("password", "")
+                    if new_ssid:
+                        save_wifi_config(new_ssid, new_password)
+                        http_send_json(conn, {"ok": True})
+                        conn.close()
+                        conn = None
+                        sleep(1)
+                        machine.reset()
+                    else:
+                        http_send_json(conn, {"ok": False, "error": "SSID cannot be empty."}, code="400 Bad Request")
+
+                elif route == "/api/setup/apikey" and method == "POST":
+                    data = parse_json_body(req)
+                    key = data.get("key", "").strip()
+                    if key:
+                        save_api_key(key)
+                        http_send_json(conn, {"ok": True})
+                    else:
+                        http_send_json(conn, {"ok": False, "error": "API key cannot be empty."}, code="400 Bad Request")
+
+                elif route == "/":
                     action = params.get("action", "")
 
                     if action == "text":
