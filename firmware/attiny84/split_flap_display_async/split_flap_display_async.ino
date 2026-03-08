@@ -228,8 +228,6 @@ public:
   // Start moving to a character position (non-blocking)
   void display_char(char c) {
     char *pointer = strchr(char_set, c);
-    DBG_PRINTLN((uint8_t)char_set[44]);
-    DBG_PRINTLN((uint8_t)c);
     if (pointer == NULL) return;
 
     uint32_t pos = (uint32_t)(pointer - char_set);
@@ -497,8 +495,10 @@ void loop() {
     DBG_PRINTLN(")");
 
     if (command == 'I') {
+      // Initialized Display
       controller.initialize();
-    } else if (command == 'D' && (uint8_t)data > 0) {
+    } else if (command == 'D' && data != 0) {
+      // Display character
       controller.display_char(data);
     } else if (command == 'S') {
       // Update Speed
