@@ -543,15 +543,6 @@ def sync_time():
     except Exception as e:
         print("Error syncing time", e)
 
-# ----------------------------
-# Main web UI
-# ----------------------------
-def html_page(status, mode, last_text):
-    return render_template("index.html", status=status, mode=mode, last_text=last_text)
-
-def html_setup(status):
-    return render_template("settings.html", status=status)
-
 def start_server():
     addr = socket.getaddrinfo("0.0.0.0", 80)[0][-1]
     s = socket.socket()
@@ -711,86 +702,7 @@ while True:
                     http_send_file(conn, filename)
 
                 elif route == "/" or route == "/index.html":
-                    if method == "GET":
-                        http_send_file(conn, "index.html")
-                    else:
-                        action = params.get("action", "")
-
-                        if action == "text":
-                            t = (params.get("t", "") or "").upper()
-                            if t:
-                                last_text = t
-                                mode = MODE_TEXT
-                                print_string(last_text)
-                                status_line = "Displayed: {}".format(last_text)
-                            else:
-                                status_line = "No text provided."
-
-                        elif action == "mode":
-                            m = params.get("m", "")
-                            if m in (MODE_TIME, MODE_TEMP):
-                                mode = m
-                                status_line = "Switched to {}".format(mode)
-                                if mode == MODE_TEMP:
-                                    last_temp_update = 0  # trigger immediate update
-                            else:
-                                status_line = "Unknown mode."
-
-                        elif action == "home":
-                            status_line = "Homing command sent."
-                            home_all()
-
-                        elif action == "8ball":
-                            last_text = eightball_roll()
-                            mode = MODE_TEXT
-                            status_line = "Shaking..."
-
-                        elif action == "claude":
-                            prompt = params.get("prompt", "").strip()
-                            if prompt:
-                                status_line = "Asking Claude..."
-                                http_send(conn, html_page(status_line, mode, last_text))
-                                conn.close()
-                                result = call_claude(prompt)
-                                last_text = result
-                                mode = MODE_TEXT
-                                print_string(last_text)
-                                status_line = "Claude: {}".format(last_text)
-                                continue
-                            else:
-                                status_line = "No prompt provided."
-
-                        http_send(conn, html_page(status_line, mode, last_text))
-
-                elif route == "/setup":
-                    setup_status = ""
-
-                    if method == "POST":
-                        action = params.get("action", "")
-
-                        if action == "wifi":
-                            import machine
-                            new_ssid = params.get("ssid", "").strip()
-                            new_password = params.get("password", "")
-                            if new_ssid:
-                                save_wifi_config(new_ssid, new_password)
-                                http_send(conn, "<h2>WiFi updated. Rebooting...</h2>")
-                                conn.close()
-                                conn = None
-                                sleep(1)
-                                machine.reset()
-                            else:
-                                setup_status = "SSID cannot be empty."
-
-                        elif action == "apikey":
-                            key = params.get("key", "").strip()
-                            if key:
-                                save_api_key(key)
-                                setup_status = "API key saved."
-                            else:
-                                setup_status = "API key cannot be empty."
-
-                    http_send(conn, html_setup(setup_status))
+                    http_send_file(conn, "index.html")
                 else:
                     # SPA fallback — let the client router handle it
                     http_send_file(conn, "index.html")
