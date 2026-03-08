@@ -13,6 +13,9 @@ if ! mpremote connect list 2>/dev/null | grep -q "2e8a"; then
   exit 1
 fi
 
+echo "Stopping running script (Ctrl+C)..."
+mpremote exec "pass" 2>/dev/null || true
+
 echo "Creating assets directory on Pico..."
 mpremote mkdir assets 2>/dev/null || true
 
