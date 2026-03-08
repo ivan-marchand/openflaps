@@ -62,31 +62,8 @@
     <div class="status">{{status}}</div>
   </div>
 
-  <div class="card">
-    <button type="button" onclick="var s=document.getElementById('wifi-section');s.style.display=s.style.display==='none'?'block':'none';">WiFi Settings</button>
-    <div id="wifi-section" style="display:none; margin-top:12px;">
-      <form action="/" method="post" style="display:block;">
-        <input type="hidden" name="action" value="wifi" />
-        <input name="ssid" type="text" placeholder="New WiFi SSID" />
-        <input name="password" type="password" placeholder="New WiFi Password" style="margin-top:8px;" />
-        <div style="margin-top:10px;">
-          <button type="submit">Update WiFi &amp; Reboot</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <div class="card">
-    <button type="button" onclick="var s=document.getElementById('api-section');s.style.display=s.style.display==='none'?'block':'none';">Claude API Key</button>
-    <div id="api-section" style="display:none; margin-top:12px;">
-      <form action="/" method="post" style="display:block;">
-        <input type="hidden" name="action" value="apikey" />
-        <input name="key" type="password" placeholder="sk-ant-..." />
-        <div style="margin-top:10px;">
-          <button type="submit">Save API Key</button>
-        </div>
-      </form>
-    </div>
+  <div style="margin-top: 8px;">
+    <a href="/setup"><button type="button">Setup</button></a>
   </div>
 </body>
 </html>
