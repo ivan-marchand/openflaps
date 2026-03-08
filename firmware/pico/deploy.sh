@@ -7,35 +7,41 @@ set -e
 
 PICO_DIR="$(dirname "$0")"
 
-echo "Detecting Pico..."
-if ! mpremote connect list 2>/dev/null | grep -q "2e8a"; then
-  echo "Error: No Pico found. Make sure it is connected via USB and running MicroPython."
+# Find the Pico's serial port (usbmodem on macOS, ttyACM on Linux)
+PORT=$(ls /dev/cu.usbmodem* /dev/ttyACM* 2>/dev/null | head -1)
+
+if [ -z "$PORT" ]; then
+  echo "Error: No Pico found on any serial port."
+  echo "Make sure it is connected via USB and running MicroPython (not bootloader mode)."
+  echo "Available ports: $(ls /dev/cu.* 2>/dev/null | grep -v Bluetooth | grep -v BLTH | grep -v Bose || echo none)"
   exit 1
 fi
 
-echo "Stopping running script (Ctrl+C)..."
-mpremote exec "pass" 2>/dev/null || true
+echo "Found Pico at $PORT"
+
+echo "Stopping running script..."
+mpremote connect "$PORT" exec "pass" 2>/dev/null || true
 
 echo "Creating assets directory on Pico..."
-mpremote mkdir assets 2>/dev/null || true
+mpremote connect "$PORT" mkdir assets 2>/dev/null || true
 
 echo "Uploading main.py..."
-mpremote cp "$PICO_DIR/main.py" :main.py
+mpremote connect "$PORT" cp "$PICO_DIR/main.py" :main.py
 
 echo "Uploading index.html..."
-mpremote cp "$PICO_DIR/index.html" :index.html
+mpremote connect "$PORT" cp "$PICO_DIR/index.html" :index.html
 
 echo "Uploading setup.html..."
-mpremote cp "$PICO_DIR/setup.html" :setup.html
+mpremote connect "$PORT" cp "$PICO_DIR/setup.html" :setup.html
 
 echo "Uploading assets/index.js..."
-mpremote cp "$PICO_DIR/assets/index.js" :assets/index.js
+mpremote connect "$PORT" cp "$PICO_DIR/assets/index.js" :assets/index.js
 
 echo "Uploading assets/index.css..."
-mpremote cp "$PICO_DIR/assets/index.css" :assets/index.css
+mpremote connect "$PORT" cp "$PICO_DIR/assets/index.css" :assets/index.css
 
 echo ""
 echo "Done! Rebooting Pico..."
-mpremote reset
+mpremote connect "$PORT" reset
 
 echo "Deploy complete."
