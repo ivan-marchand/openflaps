@@ -337,6 +337,7 @@ def update_offset(address, offset):
         i2c.writeto(address, msg)
     except:
         print("Unable update offset")
+#update_offset(0x14, 20)
 
 def change_address(old_address, new_address):
     msg = bytes([ord('C'), new_address & 0xFF])
@@ -344,6 +345,7 @@ def change_address(old_address, new_address):
         i2c.writeto(old_address, msg)
     except:
         print(f"Unable change address for {old_address}")
+#change_address(0x10, 0x14)
 
 def initialize_displays():
     for address in i2c.scan():
@@ -508,6 +510,9 @@ def sync_time():
 def html_page(status, mode, last_text):
     return render_template("index.html", status=status, mode=mode, last_text=last_text)
 
+def html_setup(status):
+    return render_template("settings.html", status=status)
+
 def start_server():
     addr = socket.getaddrinfo("0.0.0.0", 80)[0][-1]
     s = socket.socket()
@@ -544,6 +549,7 @@ wlan, ip = connect_wifi()
 sync_time()
 
 #initialize_displays()
+#change_address(0x10, 0x14)
 #display_address()
 
 server = start_server()
@@ -611,19 +617,6 @@ while True:
                         mode = MODE_TEXT
                         status_line = "Shaking..."
 
-                    elif action == "wifi":
-                        import machine
-                        new_ssid = params.get("ssid", "").strip()
-                        new_password = params.get("password", "")
-                        if new_ssid:
-                            save_wifi_config(new_ssid, new_password)
-                            http_send(conn, "<h2>WiFi updated. Rebooting...</h2>")
-                            conn.close()
-                            sleep(1)
-                            machine.reset()
-                        else:
-                            status_line = "SSID cannot be empty."
-
                     elif action == "claude":
                         prompt = params.get("prompt", "").strip()
                         if prompt:
@@ -639,15 +632,37 @@ while True:
                         else:
                             status_line = "No prompt provided."
 
-                    elif action == "apikey":
-                        key = params.get("key", "").strip()
-                        if key:
-                            save_api_key(key)
-                            status_line = "API key saved."
-                        else:
-                            status_line = "API key cannot be empty."
-
                     http_send(conn, html_page(status_line, mode, last_text))
+
+                elif route == "/setup":
+                    setup_status = ""
+
+                    if method == "POST":
+                        action = params.get("action", "")
+
+                        if action == "wifi":
+                            import machine
+                            new_ssid = params.get("ssid", "").strip()
+                            new_password = params.get("password", "")
+                            if new_ssid:
+                                save_wifi_config(new_ssid, new_password)
+                                http_send(conn, "<h2>WiFi updated. Rebooting...</h2>")
+                                conn.close()
+                                conn = None
+                                sleep(1)
+                                machine.reset()
+                            else:
+                                setup_status = "SSID cannot be empty."
+
+                        elif action == "apikey":
+                            key = params.get("key", "").strip()
+                            if key:
+                                save_api_key(key)
+                                setup_status = "API key saved."
+                            else:
+                                setup_status = "API key cannot be empty."
+
+                    http_send(conn, html_setup(setup_status))
                 else:
                     http_send(conn, "Not found", code="404 Not Found", content_type="text/plain")
 
