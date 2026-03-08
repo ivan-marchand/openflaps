@@ -639,8 +639,6 @@ while True:
                     setup_status = ""
 
                     if method == "POST":
-                        body = req.split("\r\n\r\n", 1)[1] if "\r\n\r\n" in req else ""
-                        params = parse_form(body)
                         action = params.get("action", "")
 
                         if action == "wifi":
