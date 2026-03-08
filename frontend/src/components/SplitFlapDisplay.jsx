@@ -20,7 +20,7 @@ function Tile({ char }) {
     <div class={`sfd-tile${flipping ? ' flipping' : ''}`}>
       <div class="sfd-top"><span class="sfd-char">{display}</span></div>
       <div class="sfd-seam" />
-      <div class="sfd-bottom"><span class="sfd-char">{display}</span></div>
+      <div class="sfd-bottom" />
     </div>
   )
 }
