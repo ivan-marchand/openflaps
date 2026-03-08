@@ -649,6 +649,7 @@ while True:
                                 save_wifi_config(new_ssid, new_password)
                                 http_send(conn, "<h2>WiFi updated. Rebooting...</h2>")
                                 conn.close()
+                                conn = None
                                 sleep(1)
                                 machine.reset()
                             else:
