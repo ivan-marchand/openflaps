@@ -46,9 +46,9 @@
   font-family: 'Courier New', Courier, monospace;
   font-size: 52px;
   font-weight: 700;
-  color: #f0a500;
+  color: #ffffff;
   line-height: 1;
-  text-shadow: 0 0 12px rgba(240,165,0,0.4);
+  text-shadow: 0 0 12px rgba(255,255,255,0.3);
   user-select: none;
 }
 
