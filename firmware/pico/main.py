@@ -162,6 +162,27 @@ def parse_form(data):
                 params[part] = ""
     return params
 
+MIME_TYPES = {
+    "html": "text/html",
+    "js":   "application/javascript",
+    "css":  "text/css",
+    "json": "application/json",
+    "ico":  "image/x-icon",
+}
+
+def http_send_file(conn, filepath):
+    ext = filepath.rsplit(".", 1)[-1] if "." in filepath else "txt"
+    content_type = MIME_TYPES.get(ext, "text/plain")
+    try:
+        with open(filepath, "r") as f:
+            body = f.read()
+        conn.send("HTTP/1.1 200 OK\r\n")
+        conn.send("Content-Type: {}\r\n".format(content_type))
+        conn.send("Connection: close\r\n\r\n")
+        conn.sendall(body)
+    except OSError:
+        http_send(conn, "Not found", code="404 Not Found", content_type="text/plain")
+
 def parse_json_body(req):
     if "\r\n\r\n" not in req:
         return {}
@@ -685,54 +706,61 @@ while True:
                     else:
                         http_send_json(conn, {"ok": False, "error": "API key cannot be empty."}, code="400 Bad Request")
 
-                elif route == "/":
-                    action = params.get("action", "")
+                elif route.startswith("/assets/"):
+                    filename = route.lstrip("/")  # "assets/index.js"
+                    http_send_file(conn, filename)
 
-                    if action == "text":
-                        t = (params.get("t", "") or "").upper()
-                        if t:
-                            last_text = t
+                elif route == "/" or route == "/index.html":
+                    if method == "GET":
+                        http_send_file(conn, "index.html")
+                    else:
+                        action = params.get("action", "")
+
+                        if action == "text":
+                            t = (params.get("t", "") or "").upper()
+                            if t:
+                                last_text = t
+                                mode = MODE_TEXT
+                                print_string(last_text)
+                                status_line = "Displayed: {}".format(last_text)
+                            else:
+                                status_line = "No text provided."
+
+                        elif action == "mode":
+                            m = params.get("m", "")
+                            if m in (MODE_TIME, MODE_TEMP):
+                                mode = m
+                                status_line = "Switched to {}".format(mode)
+                                if mode == MODE_TEMP:
+                                    last_temp_update = 0  # trigger immediate update
+                            else:
+                                status_line = "Unknown mode."
+
+                        elif action == "home":
+                            status_line = "Homing command sent."
+                            home_all()
+
+                        elif action == "8ball":
+                            last_text = eightball_roll()
                             mode = MODE_TEXT
-                            print_string(last_text)
-                            status_line = "Displayed: {}".format(last_text)
-                        else:
-                            status_line = "No text provided."
+                            status_line = "Shaking..."
 
-                    elif action == "mode":
-                        m = params.get("m", "")
-                        if m in (MODE_TIME, MODE_TEMP):
-                            mode = m
-                            status_line = "Switched to {}".format(mode)
-                            if mode == MODE_TEMP:
-                                last_temp_update = 0  # trigger immediate update
-                        else:
-                            status_line = "Unknown mode."
+                        elif action == "claude":
+                            prompt = params.get("prompt", "").strip()
+                            if prompt:
+                                status_line = "Asking Claude..."
+                                http_send(conn, html_page(status_line, mode, last_text))
+                                conn.close()
+                                result = call_claude(prompt)
+                                last_text = result
+                                mode = MODE_TEXT
+                                print_string(last_text)
+                                status_line = "Claude: {}".format(last_text)
+                                continue
+                            else:
+                                status_line = "No prompt provided."
 
-                    elif action == "home":
-                        status_line = "Homing command sent."
-                        home_all()
-
-                    elif action == "8ball":
-                        last_text = eightball_roll()
-                        mode = MODE_TEXT
-                        status_line = "Shaking..."
-
-                    elif action == "claude":
-                        prompt = params.get("prompt", "").strip()
-                        if prompt:
-                            status_line = "Asking Claude..."
-                            http_send(conn, html_page(status_line, mode, last_text))
-                            conn.close()
-                            result = call_claude(prompt)
-                            last_text = result
-                            mode = MODE_TEXT
-                            print_string(last_text)
-                            status_line = "Claude: {}".format(last_text)
-                            continue
-                        else:
-                            status_line = "No prompt provided."
-
-                    http_send(conn, html_page(status_line, mode, last_text))
+                        http_send(conn, html_page(status_line, mode, last_text))
 
                 elif route == "/setup":
                     setup_status = ""
@@ -764,7 +792,8 @@ while True:
 
                     http_send(conn, html_setup(setup_status))
                 else:
-                    http_send(conn, "Not found", code="404 Not Found", content_type="text/plain")
+                    # SPA fallback — let the client router handle it
+                    http_send_file(conn, "index.html")
 
             except Exception as e:
                 print(f"Unable to process request:")
