@@ -362,7 +362,6 @@ def display_address():
             print(f"Unable to Display {address}")
 
 def print_char(address: int, c: str):
-    print(address, c)
     try:
         if c == "°":
             b = 0xb0
