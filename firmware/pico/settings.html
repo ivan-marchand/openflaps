@@ -1,6 +1,7 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
+  <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Split-Flap Setup</title>
   <style>
@@ -34,7 +35,7 @@
     <h3 style="margin-top:0;">Claude API Key</h3>
     <form action="/setup" method="post">
       <input type="hidden" name="action" value="apikey" />
-      <input name="key" type="password" placeholder="sk-ant-..." />
+      <input name="key" type="password" placeholder="sk-ant-..." autocomplete="off" />
       <div style="margin-top:10px;">
         <button type="submit">Save API Key</button>
       </div>
