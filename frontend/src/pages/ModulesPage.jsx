@@ -45,6 +45,9 @@ function ModuleRow({ module, onSaved }) {
           onInput={e => setAddr(e.target.value)}
           style="width:60px;"
         />
+        <span style="margin-left:6px; font-size:0.75rem; color:#888; font-family:monospace;">
+          0x{Number(addr).toString(16).toUpperCase().padStart(2,'0')}
+        </span>
       </td>
       <td>
         <input
