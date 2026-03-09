@@ -116,7 +116,7 @@ input[type=text]:focus, input[type=password]:focus {
 
 .setup-link:hover { border-color: #f0a500; color: #f0a500; }
 
-td {
+.control-page td {
   padding: 8px;
   border-bottom: 1px solid #2a2a2a;
   font-family: 'Courier New', Courier, monospace;
@@ -125,7 +125,7 @@ td {
   vertical-align: middle;
 }
 
-td input[type=number] {
+.control-page td input[type=number] {
   background: #111;
   border: 1px solid #444;
   border-radius: 6px;
@@ -136,6 +136,6 @@ td input[type=number] {
   outline: none;
 }
 
-td input[type=number]:focus {
+.control-page td input[type=number]:focus {
   border-color: #f0a500;
 }

@@ -9,6 +9,12 @@ function ModuleRow({ module, onSaved }) {
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState('')
 
+  useEffect(() => {
+    setAddr(module.address)
+    setSpeed(module.speed ?? '')
+    setOffset(module.offset ?? '')
+  }, [module.address, module.speed, module.offset])
+
   const missedColor =
     module.missed_steps === null ? '#888' :
     module.missed_steps > 20 ? '#ff4444' :
@@ -70,12 +76,14 @@ function ModuleRow({ module, onSaved }) {
 export function ModulesPage() {
   const [modules, setModules] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
 
   function load() {
     setLoading(true)
+    setError(null)
     api.getModules()
       .then(data => { setModules(data); setLoading(false) })
-      .catch(() => setLoading(false))
+      .catch(() => { setError('Failed to load modules.'); setLoading(false) })
   }
 
   useEffect(() => { load() }, [])
@@ -90,6 +98,7 @@ export function ModulesPage() {
 
       <div class="display-card">
         {loading && <div class="status-line">Scanning I2C bus...</div>}
+        {error && <div class="status-line" style="color:#ff4444;">{error}</div>}
         {!loading && modules && modules.length === 0 && (
           <div class="status-line">No modules found.</div>
         )}
