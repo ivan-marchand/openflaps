@@ -21,4 +21,5 @@ export const api = {
   getModules: () => fetch(BASE + '/api/modules').then(r => r.json()),
   updateModule: (address, newAddress, speed, offset) =>
     post('/api/modules', { address, new_address: newAddress, speed, offset }),
+  identifyModule: (address) => post('/api/modules/identify', { address }),
 }

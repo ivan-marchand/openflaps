@@ -727,6 +727,18 @@ while True:
                     else:
                         http_send_json(conn, {"ok": False, "error": "API key cannot be empty."}, code="400 Bad Request")
 
+                elif route == "/api/modules/identify" and method == "POST":
+                    data = parse_json_body(req)
+                    address = data.get("address")
+                    if address is None:
+                        http_send_json(conn, {"ok": False, "error": "Missing address."}, code="400 Bad Request")
+                    else:
+                        try:
+                            i2c.writeto(int(address), bytes([ord('A')]))
+                            http_send_json(conn, {"ok": True})
+                        except Exception as e:
+                            http_send_json(conn, {"ok": False, "error": str(e)}, code="500 Internal Server Error")
+
                 elif route == "/api/modules" and method == "POST":
                     data = parse_json_body(req)
                     address = data.get("address")

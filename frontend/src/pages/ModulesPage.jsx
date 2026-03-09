@@ -85,11 +85,17 @@ function ModuleRow({ module, onSaved, usedAddresses }) {
         {module.missed_steps === null ? '—' : `${module.missed_steps}`}
       </td>
       <td>
-        <button class="btn" disabled={busy} onClick={save}
-          style={isPairing ? 'border-color:#f0a500; color:#f0a500;' : ''}>
-          {isPairing ? 'ASSIGN' : 'SAVE'}
-        </button>
-        {status && <span style="margin-left:8px; font-size:0.75rem; color:#888;">{status}</span>}
+        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+          <button class="btn" disabled={busy} onClick={save}
+            style={isPairing ? 'border-color:#f0a500; color:#f0a500;' : ''}>
+            {isPairing ? 'ASSIGN' : 'SAVE'}
+          </button>
+          <button class="btn" disabled={busy} onClick={() => api.identifyModule(module.address)}
+            title="Display address on this module">
+            ID
+          </button>
+          {status && <span style="font-size:0.75rem; color:#888;">{status}</span>}
+        </div>
       </td>
     </tr>
   )
