@@ -733,16 +733,20 @@ while True:
                     new_address = data.get("new_address", address)
                     speed = data.get("speed")
                     offset = data.get("offset")
-                    if address is None or speed is None or offset is None:
+                    if address is None or speed is None or offset is None or new_address is None:
                         http_send_json(conn, {"ok": False, "error": "Missing fields."}, code="400 Bad Request")
                     else:
-                        ok = update_module_params(int(address), int(speed), int(offset), int(new_address))
-                        if ok:
+                        try:
+                            ok = update_module_params(int(address), int(speed), int(offset), int(new_address))
+                        except (ValueError, TypeError):
+                            http_send_json(conn, {"ok": False, "error": "Invalid field values."}, code="400 Bad Request")
+                            ok = None
+                        if ok is True:
                             http_send_json(conn, {"ok": True})
-                        else:
+                        elif ok is False:
                             http_send_json(conn, {"ok": False, "error": "I2C write failed."}, code="500 Internal Server Error")
 
-                elif route == "/api/modules":
+                elif route == "/api/modules" and method == "GET":
                     addresses = sorted(i2c.scan())
                     modules = [read_module_params(a) for a in addresses]
                     http_send_json(conn, modules)
