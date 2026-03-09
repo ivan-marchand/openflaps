@@ -1,8 +1,8 @@
-# OpenFlap — Claude Code Instructions
+# OpenFlaps — Claude Code Instructions
 
 ## Project Overview
 
-OpenFlap is a networked split-flap display system. A Raspberry Pi Pico W hosts a WiFi web interface and communicates via I2C with ATtiny84 slave controllers, each driving a 28BYJ-48 stepper motor to flip individual character flaps.
+OpenFlaps is a networked split-flap display system. A Raspberry Pi Pico W hosts a WiFi web interface and communicates via I2C with ATtiny84 slave controllers, each driving a 28BYJ-48 stepper motor to flip individual character flaps.
 
 ## Git
 
