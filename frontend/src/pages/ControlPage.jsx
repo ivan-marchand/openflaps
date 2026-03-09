@@ -13,7 +13,7 @@ export function ControlPage() {
     api.state().then(setState).catch(() => {})
     const interval = setInterval(() => {
       api.state().then(setState).catch(() => {})
-    }, 5000)
+    }, 1000)
     return () => clearInterval(interval)
   }, [])
 

@@ -360,12 +360,13 @@ def display_web_temp():
     temp = get_outdoor_temp()
     if temp is None:
         print_string("ERR ")
-        return
+        return "ERR "
 
     temp = 32 + temp * 9/5
     t = int(round(temp))
-    txt = "{:2d}°F".format(t)
-    print_string(txt[:4])
+    txt = "{:2d}°F".format(t)[:4]
+    print_string(txt)
+    return txt
 
 # ----------------------------
 # I2C helpers (send 2 bytes)
@@ -726,12 +727,13 @@ while True:
         if mode == MODE_TIME:
             if current_minutes != minutes:
                 minutes = current_minutes
-                print_string("{:02d}{:02d}".format(hours, minutes))
+                last_text = "{:02d}{:02d}".format(hours, minutes)
+                print_string(last_text)
 
         elif mode == MODE_TEMP:
             if time.time() - last_temp_update >= 60:
                 last_temp_update = time.time()
-                display_web_temp()
+                last_text = display_web_temp() or last_text
 
         # MODE_TEXT: do nothing; it stays until user changes mode
 
