@@ -2,15 +2,29 @@ import { useState, useEffect } from 'preact/hooks'
 import { api } from '../api'
 import './ControlPage.css'
 
-function ModuleRow({ module, onSaved }) {
-  const [addr, setAddr] = useState(module.address)
+const PAIRING_ADDRESS = 0x10  // 16 — reserved for new modules
+
+function nextAvailableAddress(usedAddresses) {
+  for (let i = 0x11; i <= 0x7F; i++) {
+    if (!usedAddresses.includes(i)) return i
+  }
+  return 0x11
+}
+
+function toHex(n) {
+  return '0x' + Number(n).toString(16).toUpperCase().padStart(2, '0')
+}
+
+function ModuleRow({ module, onSaved, usedAddresses }) {
+  const isPairing = module.address === PAIRING_ADDRESS
+  const [addr, setAddr] = useState(isPairing ? nextAvailableAddress(usedAddresses) : module.address)
   const [speed, setSpeed] = useState(module.speed ?? '')
   const [offset, setOffset] = useState(module.offset ?? '')
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState('')
 
   useEffect(() => {
-    setAddr(module.address)
+    setAddr(isPairing ? nextAvailableAddress(usedAddresses) : module.address)
     setSpeed(module.speed ?? '')
     setOffset(module.offset ?? '')
   }, [module.address, module.speed, module.offset])
@@ -26,7 +40,7 @@ function ModuleRow({ module, onSaved }) {
     try {
       const r = await api.updateModule(module.address, Number(addr), Number(speed), Number(offset))
       if (r.ok) {
-        setStatus('Saved.')
+        setStatus(isPairing ? 'Assigned.' : 'Saved.')
         onSaved()
       } else {
         setStatus(r.error || 'Error.')
@@ -37,17 +51,24 @@ function ModuleRow({ module, onSaved }) {
   }
 
   return (
-    <tr>
+    <tr style={isPairing ? { background: 'rgba(240,165,0,0.06)' } : {}}>
       <td>
-        <input
-          type="number" min="1" max="127"
-          value={addr}
-          onInput={e => setAddr(e.target.value)}
-          style="width:60px;"
-        />
-        <span style="margin-left:6px; font-size:0.75rem; color:#888; font-family:monospace;">
-          0x{Number(addr).toString(16).toUpperCase().padStart(2,'0')}
-        </span>
+        <div style="display:flex; flex-direction:column; gap:2px;">
+          {isPairing && (
+            <span style="font-size:0.65rem; color:#f0a500; letter-spacing:0.05em; font-family:monospace;">
+              PAIRING
+            </span>
+          )}
+          <span style="font-size:0.75rem; color:#888; font-family:monospace;">
+            {toHex(addr)}
+          </span>
+          <input
+            type="number" min="17" max="127"
+            value={addr}
+            onInput={e => setAddr(e.target.value)}
+            style={isPairing ? 'width:60px; border-color:#f0a500;' : 'width:60px;'}
+          />
+        </div>
       </td>
       <td>
         <input
@@ -69,7 +90,10 @@ function ModuleRow({ module, onSaved }) {
         {module.missed_steps === null ? '—' : `${module.missed_steps}`}
       </td>
       <td>
-        <button class="btn" disabled={busy} onClick={save}>SAVE</button>
+        <button class="btn" disabled={busy} onClick={save}
+          style={isPairing ? 'border-color:#f0a500; color:#f0a500;' : ''}>
+          {isPairing ? 'ASSIGN' : 'SAVE'}
+        </button>
         {status && <span style="margin-left:8px; font-size:0.75rem; color:#888;">{status}</span>}
       </td>
     </tr>
@@ -90,6 +114,8 @@ export function ModulesPage() {
   }
 
   useEffect(() => { load() }, [])
+
+  const usedAddresses = modules ? modules.map(m => m.address) : []
 
   return (
     <div class="control-page">
@@ -117,7 +143,7 @@ export function ModulesPage() {
               </thead>
               <tbody>
                 {modules.map(m => (
-                  <ModuleRow key={m.address} module={m} onSaved={load} />
+                  <ModuleRow key={m.address} module={m} onSaved={load} usedAddresses={usedAddresses} />
                 ))}
               </tbody>
             </table>
