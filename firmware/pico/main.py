@@ -108,6 +108,13 @@ def http_send(conn, body, code="200 OK", content_type="text/html"):
     conn.send("Connection: close\r\n\r\n")
     conn.sendall(body)
 
+def http_send_json(conn, data, code="200 OK"):
+    body = ujson.dumps(data)
+    conn.send("HTTP/1.1 {}\r\n".format(code))
+    conn.send("Content-Type: application/json\r\n")
+    conn.send("Connection: close\r\n\r\n")
+    conn.sendall(body)
+
 def read_http_request(conn, max_bytes=4096):
     conn.settimeout(0.25)
     data = b""
@@ -154,6 +161,38 @@ def parse_form(data):
             if part:
                 params[part] = ""
     return params
+
+MIME_TYPES = {
+    "html": "text/html",
+    "js":   "application/javascript",
+    "css":  "text/css",
+    "json": "application/json",
+    "ico":  "image/x-icon",
+}
+
+def http_send_file(conn, filepath):
+    ext = filepath.rsplit(".", 1)[-1] if "." in filepath else "txt"
+    content_type = MIME_TYPES.get(ext, "text/plain")
+    try:
+        with open(filepath, "r") as f:
+            body = f.read()
+        conn.send("HTTP/1.1 200 OK\r\n")
+        conn.send("Content-Type: {}\r\n".format(content_type))
+        conn.send("Connection: close\r\n\r\n")
+        conn.sendall(body)
+    except OSError:
+        http_send(conn, "Not found", code="404 Not Found", content_type="text/plain")
+
+def parse_json_body(req):
+    if "\r\n\r\n" not in req:
+        return {}
+    body = req.split("\r\n\r\n", 1)[1].strip()
+    if not body:
+        return {}
+    try:
+        return ujson.loads(body)
+    except:
+        return {}
 
 # ----------------------------
 # AP provisioning (runs when no saved credentials or connection fails)
@@ -321,12 +360,13 @@ def display_web_temp():
     temp = get_outdoor_temp()
     if temp is None:
         print_string("ERR ")
-        return
+        return "ERR "
 
     temp = 32 + temp * 9/5
     t = int(round(temp))
-    txt = "{:2d}°F".format(t)
-    print_string(txt[:4])
+    txt = "{:2d}°F".format(t)[:4]
+    print_string(txt)
+    return txt
 
 # ----------------------------
 # I2C helpers (send 2 bytes)
@@ -377,8 +417,8 @@ def print_string(s: str):
     address = BASE_ADDR
     while address in addresses:
         if s:
-            c = s[-1]
-            s = s[:-1]
+            c = s[0]
+            s = s[1:]
             print_char(address, c)
         else:
             print_char(address, " ")
@@ -390,6 +430,45 @@ def home_all():
             i2c.writeto(address, b'I\x00')
         except:
             print(f"Unable Home display {address}")
+
+def read_module_params(address):
+    try:
+        data = i2c.readfrom(address, 3)
+        return {
+            "address": address,
+            "speed": data[0],
+            "offset": data[1],
+            "missed_steps": data[2],
+        }
+    except Exception as e:
+        print("Failed to read module {}: {}".format(hex(address), e))
+        return {
+            "address": address,
+            "speed": None,
+            "offset": None,
+            "missed_steps": None,
+        }
+
+def update_module_params(address, speed, offset, new_address):
+    # Read current params first — only send commands for values that changed
+    # to avoid unnecessary EEPROM writes (ATtiny EEPROM rated for ~100k cycles).
+    # 20ms delay between commands: ATtiny has a single-slot message buffer and
+    # EEPROM.write() blocks for ~3.3ms, so rapid writes lose intermediate commands.
+    try:
+        current = read_module_params(address)
+        if current["offset"] is None or current["offset"] != (offset & 0xFF):
+            i2c.writeto(address, bytes([ord('O'), offset & 0xFF]))
+            time.sleep_ms(20)
+        if current["speed"] is None or current["speed"] != (speed & 0xFF):
+            i2c.writeto(address, bytes([ord('S'), speed & 0xFF]))
+            time.sleep_ms(20)
+        if new_address != address:
+            i2c.writeto(address, bytes([ord('C'), new_address & 0xFF]))
+            time.sleep_ms(20)
+        return True
+    except Exception as e:
+        print("Failed to update module {}: {}".format(hex(address), e))
+        return False
 
 EIGHTBALL_4 = [
     "YES ", "NO  ", "YEP ", "NAH ",
@@ -504,15 +583,6 @@ def sync_time():
     except Exception as e:
         print("Error syncing time", e)
 
-# ----------------------------
-# Main web UI
-# ----------------------------
-def html_page(status, mode, last_text):
-    return render_template("index.html", status=status, mode=mode, last_text=last_text)
-
-def html_setup(status):
-    return render_template("settings.html", status=status)
-
 def start_server():
     addr = socket.getaddrinfo("0.0.0.0", 80)[0][-1]
     s = socket.socket()
@@ -585,86 +655,133 @@ while True:
                 else:
                     _, params = parse_query(path)
 
-                if route == "/":
-                    action = params.get("action", "")
+                if route == "/api/state":
+                    http_send_json(conn, {
+                        "mode": mode,
+                        "text": last_text,
+                        "status": status_line,
+                    })
 
-                    if action == "text":
-                        t = (params.get("t", "") or "").upper()
-                        if t:
-                            last_text = t
-                            mode = MODE_TEXT
-                            print_string(last_text)
-                            status_line = "Displayed: {}".format(last_text)
-                        else:
-                            status_line = "No text provided."
-
-                    elif action == "mode":
-                        m = params.get("m", "")
-                        if m in (MODE_TIME, MODE_TEMP):
-                            mode = m
-                            status_line = "Switched to {}".format(mode)
-                            if mode == MODE_TEMP:
-                                last_temp_update = 0  # trigger immediate update
-                        else:
-                            status_line = "Unknown mode."
-
-                    elif action == "home":
-                        status_line = "Homing command sent."
-                        home_all()
-
-                    elif action == "8ball":
-                        last_text = eightball_roll()
+                elif route == "/api/text" and method == "POST":
+                    data = parse_json_body(req)
+                    t = (data.get("text", "") or "").upper()
+                    if t:
+                        last_text = t
                         mode = MODE_TEXT
-                        status_line = "Shaking..."
+                        print_string(last_text)
+                        status_line = "Displayed: {}".format(last_text)
+                        http_send_json(conn, {"ok": True, "status": status_line})
+                    else:
+                        http_send_json(conn, {"ok": False, "error": "No text provided."}, code="400 Bad Request")
 
-                    elif action == "claude":
-                        prompt = params.get("prompt", "").strip()
-                        if prompt:
-                            status_line = "Asking Claude..."
-                            http_send(conn, html_page(status_line, mode, last_text))
-                            conn.close()
-                            result = call_claude(prompt)
-                            last_text = result
-                            mode = MODE_TEXT
-                            print_string(last_text)
-                            status_line = "Claude: {}".format(last_text)
-                            continue
-                        else:
-                            status_line = "No prompt provided."
+                elif route == "/api/mode" and method == "POST":
+                    data = parse_json_body(req)
+                    m = data.get("mode", "")
+                    if m in (MODE_TIME, MODE_TEMP):
+                        mode = m
+                        status_line = "Switched to {}".format(mode)
+                        if mode == MODE_TEMP:
+                            last_temp_update = 0
+                        http_send_json(conn, {"ok": True, "status": status_line})
+                    else:
+                        http_send_json(conn, {"ok": False, "error": "Unknown mode."}, code="400 Bad Request")
 
-                    http_send(conn, html_page(status_line, mode, last_text))
+                elif route == "/api/8ball" and method == "POST":
+                    last_text = eightball_roll()
+                    mode = MODE_TEXT
+                    status_line = "Shaking..."
+                    http_send_json(conn, {"ok": True, "text": last_text, "status": status_line})
 
-                elif route == "/setup":
-                    setup_status = ""
+                elif route == "/api/home" and method == "POST":
+                    home_all()
+                    status_line = "Homing..."
+                    http_send_json(conn, {"ok": True, "status": status_line})
 
-                    if method == "POST":
-                        action = params.get("action", "")
+                elif route == "/api/claude" and method == "POST":
+                    data = parse_json_body(req)
+                    prompt = data.get("prompt", "").strip()
+                    if prompt:
+                        status_line = "Asking Claude..."
+                        http_send_json(conn, {"ok": True, "status": status_line})
+                        conn.close()
+                        conn = None
+                        result = call_claude(prompt)
+                        last_text = result
+                        mode = MODE_TEXT
+                        print_string(last_text)
+                        status_line = "Claude: {}".format(last_text)
+                    else:
+                        http_send_json(conn, {"ok": False, "error": "No prompt provided."}, code="400 Bad Request")
 
-                        if action == "wifi":
-                            import machine
-                            new_ssid = params.get("ssid", "").strip()
-                            new_password = params.get("password", "")
-                            if new_ssid:
-                                save_wifi_config(new_ssid, new_password)
-                                http_send(conn, "<h2>WiFi updated. Rebooting...</h2>")
-                                conn.close()
-                                conn = None
-                                sleep(1)
-                                machine.reset()
-                            else:
-                                setup_status = "SSID cannot be empty."
+                elif route == "/api/setup/wifi" and method == "POST":
+                    import machine
+                    data = parse_json_body(req)
+                    new_ssid = data.get("ssid", "").strip()
+                    new_password = data.get("password", "")
+                    if new_ssid:
+                        save_wifi_config(new_ssid, new_password)
+                        http_send_json(conn, {"ok": True})
+                        conn.close()
+                        conn = None
+                        sleep(1)
+                        machine.reset()
+                    else:
+                        http_send_json(conn, {"ok": False, "error": "SSID cannot be empty."}, code="400 Bad Request")
 
-                        elif action == "apikey":
-                            key = params.get("key", "").strip()
-                            if key:
-                                save_api_key(key)
-                                setup_status = "API key saved."
-                            else:
-                                setup_status = "API key cannot be empty."
+                elif route == "/api/setup/apikey" and method == "POST":
+                    data = parse_json_body(req)
+                    key = data.get("key", "").strip()
+                    if key:
+                        save_api_key(key)
+                        http_send_json(conn, {"ok": True})
+                    else:
+                        http_send_json(conn, {"ok": False, "error": "API key cannot be empty."}, code="400 Bad Request")
 
-                    http_send(conn, html_setup(setup_status))
+                elif route == "/api/modules/identify" and method == "POST":
+                    data = parse_json_body(req)
+                    address = data.get("address")
+                    if address is None:
+                        http_send_json(conn, {"ok": False, "error": "Missing address."}, code="400 Bad Request")
+                    else:
+                        try:
+                            i2c.writeto(int(address), bytes([ord('A')]))
+                            http_send_json(conn, {"ok": True})
+                        except Exception as e:
+                            http_send_json(conn, {"ok": False, "error": str(e)}, code="500 Internal Server Error")
+
+                elif route == "/api/modules" and method == "POST":
+                    data = parse_json_body(req)
+                    address = data.get("address")
+                    new_address = data.get("new_address", address)
+                    speed = data.get("speed")
+                    offset = data.get("offset")
+                    if address is None or speed is None or offset is None or new_address is None:
+                        http_send_json(conn, {"ok": False, "error": "Missing fields."}, code="400 Bad Request")
+                    else:
+                        try:
+                            ok = update_module_params(int(address), int(speed), int(offset), int(new_address))
+                        except (ValueError, TypeError):
+                            http_send_json(conn, {"ok": False, "error": "Invalid field values."}, code="400 Bad Request")
+                            ok = None
+                        if ok is True:
+                            http_send_json(conn, {"ok": True})
+                        elif ok is False:
+                            http_send_json(conn, {"ok": False, "error": "I2C write failed."}, code="500 Internal Server Error")
+
+                elif route == "/api/modules" and method == "GET":
+                    addresses = sorted(i2c.scan())
+                    modules = [read_module_params(a) for a in addresses]
+                    http_send_json(conn, modules)
+
+                elif route.startswith("/assets/"):
+                    filename = route.lstrip("/")  # "assets/index.js"
+                    http_send_file(conn, filename)
+
+                elif route == "/" or route == "/index.html":
+                    http_send_file(conn, "index.html")
                 else:
-                    http_send(conn, "Not found", code="404 Not Found", content_type="text/plain")
+                    # SPA fallback — let the client router handle it
+                    http_send_file(conn, "index.html")
 
             except Exception as e:
                 print(f"Unable to process request:")
@@ -685,12 +802,13 @@ while True:
         if mode == MODE_TIME:
             if current_minutes != minutes:
                 minutes = current_minutes
-                print_string("{:02d}{:02d}".format(hours, minutes))
+                last_text = "{:02d}{:02d}".format(hours, minutes)
+                print_string(last_text)
 
         elif mode == MODE_TEMP:
             if time.time() - last_temp_update >= 60:
                 last_temp_update = time.time()
-                display_web_temp()
+                last_text = display_web_temp() or last_text
 
         # MODE_TEXT: do nothing; it stays until user changes mode
 
