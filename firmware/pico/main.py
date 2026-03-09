@@ -727,6 +727,26 @@ while True:
                     else:
                         http_send_json(conn, {"ok": False, "error": "API key cannot be empty."}, code="400 Bad Request")
 
+                elif route == "/api/modules" and method == "POST":
+                    data = parse_json_body(req)
+                    address = data.get("address")
+                    new_address = data.get("new_address", address)
+                    speed = data.get("speed")
+                    offset = data.get("offset")
+                    if address is None or speed is None or offset is None:
+                        http_send_json(conn, {"ok": False, "error": "Missing fields."}, code="400 Bad Request")
+                    else:
+                        ok = update_module_params(int(address), int(speed), int(offset), int(new_address))
+                        if ok:
+                            http_send_json(conn, {"ok": True})
+                        else:
+                            http_send_json(conn, {"ok": False, "error": "I2C write failed."}, code="500 Internal Server Error")
+
+                elif route == "/api/modules":
+                    addresses = sorted(i2c.scan())
+                    modules = [read_module_params(a) for a in addresses]
+                    http_send_json(conn, modules)
+
                 elif route.startswith("/assets/"):
                     filename = route.lstrip("/")  # "assets/index.js"
                     http_send_file(conn, filename)
