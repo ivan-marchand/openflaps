@@ -450,11 +450,16 @@ def read_module_params(address):
         }
 
 def update_module_params(address, speed, offset, new_address):
+    # 20ms delay between commands: ATtiny has a single-slot message buffer and
+    # EEPROM.write() blocks for ~3.3ms, so rapid writes lose intermediate commands.
     try:
         i2c.writeto(address, bytes([ord('O'), offset & 0xFF]))
+        time.sleep_ms(20)
         i2c.writeto(address, bytes([ord('S'), speed & 0xFF]))
+        time.sleep_ms(20)
         if new_address != address:
             i2c.writeto(address, bytes([ord('C'), new_address & 0xFF]))
+            time.sleep_ms(20)
         return True
     except Exception as e:
         print("Failed to update module {}: {}".format(hex(address), e))
