@@ -79,7 +79,10 @@ export function ControlPage() {
         </div>
       </div>
 
-      <a class="setup-link" href="#/setup">⚙ SETUP</a>
+      <div style="display:flex; gap:8px; margin-top:8px;">
+        <a class="setup-link" style="margin-top:0;" href="#/setup">⚙ SETUP</a>
+        <a class="setup-link" style="margin-top:0;" href="#/modules">⊞ MODULES</a>
+      </div>
     </div>
   )
 }
