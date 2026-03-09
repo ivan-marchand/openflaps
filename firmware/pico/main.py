@@ -450,13 +450,18 @@ def read_module_params(address):
         }
 
 def update_module_params(address, speed, offset, new_address):
+    # Read current params first — only send commands for values that changed
+    # to avoid unnecessary EEPROM writes (ATtiny EEPROM rated for ~100k cycles).
     # 20ms delay between commands: ATtiny has a single-slot message buffer and
     # EEPROM.write() blocks for ~3.3ms, so rapid writes lose intermediate commands.
     try:
-        i2c.writeto(address, bytes([ord('O'), offset & 0xFF]))
-        time.sleep_ms(20)
-        i2c.writeto(address, bytes([ord('S'), speed & 0xFF]))
-        time.sleep_ms(20)
+        current = read_module_params(address)
+        if current["offset"] is None or current["offset"] != (offset & 0xFF):
+            i2c.writeto(address, bytes([ord('O'), offset & 0xFF]))
+            time.sleep_ms(20)
+        if current["speed"] is None or current["speed"] != (speed & 0xFF):
+            i2c.writeto(address, bytes([ord('S'), speed & 0xFF]))
+            time.sleep_ms(20)
         if new_address != address:
             i2c.writeto(address, bytes([ord('C'), new_address & 0xFF]))
             time.sleep_ms(20)
