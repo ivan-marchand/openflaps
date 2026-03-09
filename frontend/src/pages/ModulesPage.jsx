@@ -53,14 +53,9 @@ function ModuleRow({ module, onSaved, usedAddresses }) {
   return (
     <tr style={isPairing ? { background: 'rgba(240,165,0,0.06)' } : {}}>
       <td>
-        <div style="display:flex; flex-direction:column; gap:2px;">
-          {isPairing && (
-            <span style="font-size:0.65rem; color:#f0a500; letter-spacing:0.05em; font-family:monospace;">
-              PAIRING
-            </span>
-          )}
-          <span style="font-size:0.75rem; color:#888; font-family:monospace;">
-            {toHex(addr)}
+        <div style="display:flex; align-items:center; gap:6px;">
+          <span style="font-size:0.75rem; color:#888; font-family:monospace; min-width:36px;">
+            {isPairing ? <span style="color:#f0a500;">PAIR</span> : toHex(addr)}
           </span>
           <input
             type="number" min="17" max="127"
