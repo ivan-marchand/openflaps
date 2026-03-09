@@ -417,8 +417,8 @@ def print_string(s: str):
     address = BASE_ADDR
     while address in addresses:
         if s:
-            c = s[-1]
-            s = s[:-1]
+            c = s[0]
+            s = s[1:]
             print_char(address, c)
         else:
             print_char(address, " ")
