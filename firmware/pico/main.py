@@ -431,6 +431,35 @@ def home_all():
         except:
             print(f"Unable Home display {address}")
 
+def read_module_params(address):
+    try:
+        data = i2c.readfrom(address, 3)
+        return {
+            "address": address,
+            "speed": data[0],
+            "offset": data[1],
+            "missed_steps": data[2],
+        }
+    except Exception as e:
+        print("Failed to read module {}: {}".format(hex(address), e))
+        return {
+            "address": address,
+            "speed": None,
+            "offset": None,
+            "missed_steps": None,
+        }
+
+def update_module_params(address, speed, offset, new_address):
+    try:
+        i2c.writeto(address, bytes([ord('O'), offset & 0xFF]))
+        i2c.writeto(address, bytes([ord('S'), speed & 0xFF]))
+        if new_address != address:
+            i2c.writeto(address, bytes([ord('C'), new_address & 0xFF]))
+        return True
+    except Exception as e:
+        print("Failed to update module {}: {}".format(hex(address), e))
+        return False
+
 EIGHTBALL_4 = [
     "YES ", "NO  ", "YEP ", "NAH ",
     "MAYB", "SURE", "OKAY", "IDK ",
