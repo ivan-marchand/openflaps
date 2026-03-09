@@ -514,6 +514,8 @@ void loop() {
       // Change i2c address
       EEPROM.write(EEPROM_I2C_ADDRESS, (uint8_t)data);
       Wire.begin((uint8_t)data);
+      Wire.onReceive(receive_event);
+      Wire.onRequest(request_event);
     } else if (command == 'A') {
       // Display character corresponding to this device's I2C address
       // 0x10-0x19 -> '0'-'9', 0x1A+ -> 'A'-'Z'

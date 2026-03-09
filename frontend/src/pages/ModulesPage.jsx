@@ -1,0 +1,156 @@
+import { useState, useEffect } from 'preact/hooks'
+import { api } from '../api'
+import './ControlPage.css'
+
+const PAIRING_ADDRESS = 0x10  // 16 — reserved for new modules
+
+function nextAvailableAddress(usedAddresses) {
+  for (let i = 0x11; i <= 0x7F; i++) {
+    if (!usedAddresses.includes(i)) return i
+  }
+  return 0x11
+}
+
+function toHex(n) {
+  return '0x' + Number(n).toString(16).toUpperCase().padStart(2, '0')
+}
+
+function ModuleRow({ module, onSaved, usedAddresses }) {
+  const isPairing = module.address === PAIRING_ADDRESS
+  const [addr, setAddr] = useState(isPairing ? nextAvailableAddress(usedAddresses) : module.address)
+  const [speed, setSpeed] = useState(module.speed ?? '')
+  const [offset, setOffset] = useState(module.offset ?? '')
+  const [busy, setBusy] = useState(false)
+  const [status, setStatus] = useState('')
+
+  useEffect(() => {
+    setAddr(isPairing ? nextAvailableAddress(usedAddresses) : module.address)
+    setSpeed(module.speed ?? '')
+    setOffset(module.offset ?? '')
+  }, [module.address, module.speed, module.offset])
+
+  const missedColor =
+    module.missed_steps === null ? '#888' :
+    module.missed_steps > 20 ? '#ff4444' :
+    module.missed_steps > 5  ? '#f0a500' : '#888'
+
+  async function save() {
+    setBusy(true)
+    setStatus('')
+    try {
+      const r = await api.updateModule(module.address, Number(addr), Number(speed), Number(offset))
+      if (r.ok) {
+        setStatus(isPairing ? 'Assigned.' : 'Saved.')
+        onSaved()
+      } else {
+        setStatus(r.error || 'Error.')
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <tr style={isPairing ? { background: 'rgba(240,165,0,0.06)' } : {}}>
+      <td>
+        <div style="display:flex; align-items:center; gap:6px;">
+          <span style="font-size:0.75rem; color:#888; font-family:monospace; min-width:36px;">
+            {isPairing ? <span style="color:#f0a500;">PAIR</span> : toHex(addr)}
+          </span>
+          <input
+            type="number" min="17" max="127"
+            value={addr}
+            onInput={e => setAddr(e.target.value)}
+            style={isPairing ? 'width:60px; border-color:#f0a500;' : 'width:60px;'}
+          />
+        </div>
+      </td>
+      <td>
+        <input
+          type="number" min="1" max="255"
+          value={speed}
+          onInput={e => setSpeed(e.target.value)}
+          style="width:60px;"
+        />
+      </td>
+      <td>
+        <input
+          type="number" min="-127" max="127"
+          value={offset}
+          onInput={e => setOffset(e.target.value)}
+          style="width:60px;"
+        />
+      </td>
+      <td style={{ color: missedColor, fontFamily: 'monospace' }}>
+        {module.missed_steps === null ? '—' : `${module.missed_steps}`}
+      </td>
+      <td>
+        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+          <button class="btn" disabled={busy} onClick={save}
+            style={isPairing ? 'border-color:#f0a500; color:#f0a500;' : ''}>
+            {isPairing ? 'ASSIGN' : 'SAVE'}
+          </button>
+          <button class="btn" disabled={busy} onClick={() => api.identifyModule(module.address)}
+            title="Display address on this module">
+            ID
+          </button>
+          {status && <span style="font-size:0.75rem; color:#888;">{status}</span>}
+        </div>
+      </td>
+    </tr>
+  )
+}
+
+export function ModulesPage() {
+  const [modules, setModules] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+
+  function load() {
+    setLoading(true)
+    setError(null)
+    api.getModules()
+      .then(data => { setModules(data); setLoading(false) })
+      .catch(() => { setError('Failed to load modules.'); setLoading(false) })
+  }
+
+  useEffect(() => { load() }, [])
+
+  const usedAddresses = modules ? modules.map(m => m.address) : []
+
+  return (
+    <div class="control-page">
+      <div class="page-header">
+        <a href="#/" class="setup-link" style="margin-top:0;">← BACK</a>
+        <span class="page-title">MODULES</span>
+        <button class="btn" onClick={load} disabled={loading}>⟳ REFRESH</button>
+      </div>
+
+      <div class="display-card">
+        {loading && <div class="status-line">Scanning I2C bus...</div>}
+        {error && <div class="status-line" style="color:#ff4444;">{error}</div>}
+        {!loading && modules && modules.length === 0 && (
+          <div class="status-line">No modules found.</div>
+        )}
+        {!loading && modules && modules.length > 0 && (
+          <div style="overflow-x:auto;">
+            <table style="width:100%; border-collapse:collapse;">
+              <thead>
+                <tr>
+                  {['ADDR','SPEED','OFFSET','MISSED',''].map(h => (
+                    <th key={h} style="text-align:left; padding:6px 8px; font-size:0.7rem; color:#888; letter-spacing:0.05em; border-bottom:1px solid #333;">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {modules.map(m => (
+                  <ModuleRow key={m.address} module={m} onSaved={load} usedAddresses={usedAddresses} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
