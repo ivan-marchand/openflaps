@@ -18,7 +18,7 @@ export const api = {
   askClaude: (prompt) => post('/api/claude', { prompt }),
   saveWifi: (ssid, password) => post('/api/setup/wifi', { ssid, password }),
   saveApiKey: (key) => post('/api/setup/apikey', { key }),
-  getModules: () => fetch('/api/modules').then(r => r.json()),
+  getModules: () => fetch(BASE + '/api/modules').then(r => r.json()),
   updateModule: (address, newAddress, speed, offset) =>
     post('/api/modules', { address, new_address: newAddress, speed, offset }),
 }
