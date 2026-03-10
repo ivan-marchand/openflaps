@@ -8,6 +8,7 @@ __pycache__/
 
 # MicroPython credentials (never commit WiFi passwords)
 firmware/pico/wifi_config.json
+firmware/pico/timezone_config.json
 
 # macOS
 .DS_Store
