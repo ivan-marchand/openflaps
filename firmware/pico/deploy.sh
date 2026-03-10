@@ -28,6 +28,9 @@ mpremote connect "$PORT" mkdir assets 2>/dev/null || true
 echo "Uploading main.py..."
 mpremote connect "$PORT" cp "$PICO_DIR/main.py" :main.py
 
+echo "Uploading tz.py..."
+mpremote connect "$PORT" cp "$PICO_DIR/tz.py" :tz.py
+
 echo "Uploading index.html..."
 mpremote connect "$PORT" cp "$PICO_DIR/index.html" :index.html
 

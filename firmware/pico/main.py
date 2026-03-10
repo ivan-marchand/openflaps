@@ -12,6 +12,7 @@ import ntptime
 import socket
 import sys
 import ujson
+import tz
 
 
 # ----------------------------
@@ -19,8 +20,7 @@ import ujson
 # ----------------------------
 CONFIG_FILE = "wifi_config.json"
 API_CONFIG_FILE = "api_config.json"
-
-UTC_OFFSET_SECONDS = -5 * 3600  # EST (no DST handling)
+TIMEZONE_CONFIG_FILE = "timezone_config.json"
 
 # I2C
 i2c = I2C(0, freq=100000, scl=Pin(1), sda=Pin(0))
@@ -66,6 +66,22 @@ def save_api_key(key):
         return True
     except Exception as e:
         print("Failed to save API key:", e)
+        return False
+
+def load_timezone():
+    try:
+        with open(TIMEZONE_CONFIG_FILE, "r") as f:
+            return ujson.load(f).get("zone", "UTC")
+    except:
+        return "UTC"
+
+def save_timezone(zone):
+    try:
+        with open(TIMEZONE_CONFIG_FILE, "w") as f:
+            ujson.dump({"zone": zone}, f)
+        return True
+    except Exception as e:
+        print("Failed to save timezone:", e)
         return False
 
 # ----------------------------
@@ -617,6 +633,8 @@ print("I2C devices:", [hex(a) for a in s])
 
 wlan, ip = connect_wifi()
 sync_time()
+last_ntp_sync = time.time()
+current_timezone = load_timezone()
 
 #initialize_displays()
 #change_address(0x10, 0x14)
@@ -737,6 +755,16 @@ while True:
                     else:
                         http_send_json(conn, {"ok": False, "error": "API key cannot be empty."}, code="400 Bad Request")
 
+                elif route == "/api/setup/timezone" and method == "POST":
+                    data = parse_json_body(req)
+                    new_zone = data.get("zone", "")
+                    if not new_zone or new_zone not in tz.ZONES:
+                        http_send_json(conn, {"ok": False, "error": "Unknown timezone"}, code="400 Bad Request")
+                    else:
+                        save_timezone(new_zone)
+                        current_timezone = new_zone
+                        http_send_json(conn, {"ok": True})
+
                 elif route == "/api/modules/identify" and method == "POST":
                     data = parse_json_body(req)
                     address = data.get("address")
@@ -773,6 +801,10 @@ while True:
                     modules = [read_module_params(a) for a in addresses]
                     http_send_json(conn, modules)
 
+                elif route == "/api/timezone" and method == "GET":
+                    zones = tz.zone_list()
+                    http_send_json(conn, {"zones": zones, "current": current_timezone})
+
                 elif route.startswith("/assets/"):
                     filename = route.lstrip("/")  # "assets/index.js"
                     http_send_file(conn, filename)
@@ -794,7 +826,7 @@ while True:
                 conn.close()
 
         # Mode tasks (time/temp updates)
-        actual_time = time.time() + UTC_OFFSET_SECONDS
+        actual_time = time.time() + tz.get_offset(current_timezone)
         current_time = time.localtime(actual_time)
         hours = current_time[3]
         current_minutes = current_time[4]
@@ -809,6 +841,11 @@ while True:
             if time.time() - last_temp_update >= 60:
                 last_temp_update = time.time()
                 last_text = display_web_temp() or last_text
+
+        # Periodic NTP re-sync (every hour)
+        if time.time() - last_ntp_sync >= 3600:
+            sync_time()
+            last_ntp_sync = time.time()
 
         # MODE_TEXT: do nothing; it stays until user changes mode
 
