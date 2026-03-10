@@ -755,6 +755,7 @@ while True:
                         http_send_json(conn, {"ok": False, "error": "API key cannot be empty."}, code="400 Bad Request")
 
                 elif route == "/api/setup/timezone" and method == "POST":
+                    global current_timezone
                     data = parse_json_body(req)
                     new_zone = data.get("zone", "")
                     if not new_zone or new_zone not in tz.ZONES:
