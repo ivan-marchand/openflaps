@@ -633,6 +633,7 @@ print("I2C devices:", [hex(a) for a in s])
 
 wlan, ip = connect_wifi()
 sync_time()
+last_ntp_sync = time.time()
 current_timezone = load_timezone()
 
 #initialize_displays()
@@ -840,6 +841,11 @@ while True:
             if time.time() - last_temp_update >= 60:
                 last_temp_update = time.time()
                 last_text = display_web_temp() or last_text
+
+        # Periodic NTP re-sync (every hour)
+        if time.time() - last_ntp_sync >= 3600:
+            sync_time()
+            last_ntp_sync = time.time()
 
         # MODE_TEXT: do nothing; it stays until user changes mode
 
