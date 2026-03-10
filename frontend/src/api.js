@@ -18,6 +18,8 @@ export const api = {
   askClaude: (prompt) => post('/api/claude', { prompt }),
   saveWifi: (ssid, password) => post('/api/setup/wifi', { ssid, password }),
   saveApiKey: (key) => post('/api/setup/apikey', { key }),
+  getTimezone: () => fetch(BASE + '/api/timezone').then(r => r.json()),
+  saveTimezone: (zone) => post('/api/setup/timezone', { zone }),
   getModules: () => fetch(BASE + '/api/modules').then(r => r.json()),
   updateModule: (address, newAddress, speed, offset) =>
     post('/api/modules', { address, new_address: newAddress, speed, offset }),
