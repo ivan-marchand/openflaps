@@ -6,8 +6,9 @@ __pycache__/
 *.pyc
 *.pyo
 
-# MicroPython credentials (never commit WiFi passwords)
+# MicroPython credentials (never commit WiFi passwords or API keys)
 firmware/pico/wifi_config.json
+firmware/pico/api_config.json
 firmware/pico/timezone_config.json
 
 # macOS
