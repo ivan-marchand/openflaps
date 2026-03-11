@@ -643,6 +643,213 @@ current_timezone = load_timezone()
 server = start_server()
 
 # ----------------------------
+# Request handler
+# ----------------------------
+def handle_request(conn):
+    global mode, last_text, status_line, current_timezone, minutes, last_temp_update
+    try:
+        req = read_http_request(conn)
+        if not req:
+            conn.close()
+            conn = None
+            return
+        line = req.split("\r\n", 1)[0]
+        parts = line.split()
+        path = parts[1] if len(parts) >= 2 else "/"
+
+        method = parts[0] if parts else "GET"
+        route, _ = parse_query(path)
+
+        # Parse POST body or fall back to query string
+        if method == "POST":
+            body = req.split("\r\n\r\n", 1)[1] if "\r\n\r\n" in req else ""
+            params = parse_form(body)
+        else:
+            _, params = parse_query(path)
+
+        if route == "/api/state":
+            http_send_json(conn, {
+                "mode": mode,
+                "text": last_text,
+                "status": status_line,
+            })
+
+        elif route == "/api/text" and method == "POST":
+            data = parse_json_body(req)
+            t = (data.get("text", "") or "").upper()
+            if t:
+                last_text = t
+                mode = MODE_TEXT
+                print_string(last_text)
+                status_line = "Displayed: {}".format(last_text)
+                http_send_json(conn, {"ok": True, "status": status_line})
+            else:
+                http_send_json(conn, {"ok": False, "error": "No text provided."}, code="400 Bad Request")
+
+        elif route == "/api/mode" and method == "POST":
+            data = parse_json_body(req)
+            m = data.get("mode", "")
+            if m in (MODE_TIME, MODE_TEMP):
+                mode = m
+                status_line = "Switched to {}".format(mode)
+                if mode == MODE_TEMP:
+                    last_temp_update = 0
+                http_send_json(conn, {"ok": True, "status": status_line})
+            else:
+                http_send_json(conn, {"ok": False, "error": "Unknown mode."}, code="400 Bad Request")
+
+        elif route == "/api/8ball" and method == "POST":
+            last_text = eightball_roll()
+            mode = MODE_TEXT
+            status_line = "Shaking..."
+            http_send_json(conn, {"ok": True, "text": last_text, "status": status_line})
+
+        elif route == "/api/home" and method == "POST":
+            home_all()
+            status_line = "Homing..."
+            http_send_json(conn, {"ok": True, "status": status_line})
+
+        elif route == "/api/claude" and method == "POST":
+            data = parse_json_body(req)
+            prompt = data.get("prompt", "").strip()
+            if prompt:
+                status_line = "Asking Claude..."
+                http_send_json(conn, {"ok": True, "status": status_line})
+                conn.close()
+                conn = None
+                result = call_claude(prompt)
+                last_text = result
+                mode = MODE_TEXT
+                print_string(last_text)
+                status_line = "Claude: {}".format(last_text)
+            else:
+                http_send_json(conn, {"ok": False, "error": "No prompt provided."}, code="400 Bad Request")
+
+        elif route == "/api/setup/wifi" and method == "POST":
+            import machine
+            data = parse_json_body(req)
+            new_ssid = data.get("ssid", "").strip()
+            new_password = data.get("password", "")
+            if new_ssid:
+                save_wifi_config(new_ssid, new_password)
+                http_send_json(conn, {"ok": True})
+                conn.close()
+                conn = None
+                sleep(1)
+                machine.reset()
+            else:
+                http_send_json(conn, {"ok": False, "error": "SSID cannot be empty."}, code="400 Bad Request")
+
+        elif route == "/api/setup/apikey" and method == "POST":
+            data = parse_json_body(req)
+            key = data.get("key", "").strip()
+            if key:
+                save_api_key(key)
+                http_send_json(conn, {"ok": True})
+            else:
+                http_send_json(conn, {"ok": False, "error": "API key cannot be empty."}, code="400 Bad Request")
+
+        elif route == "/api/setup/timezone" and method == "POST":
+            data = parse_json_body(req)
+            new_zone = data.get("zone", "")
+            if not new_zone or new_zone not in tz.ZONES:
+                http_send_json(conn, {"ok": False, "error": "Unknown timezone"}, code="400 Bad Request")
+            else:
+                save_timezone(new_zone)
+                current_timezone = new_zone
+                http_send_json(conn, {"ok": True})
+
+        elif route == "/api/modules/identify" and method == "POST":
+            data = parse_json_body(req)
+            address = data.get("address")
+            if address is None:
+                http_send_json(conn, {"ok": False, "error": "Missing address."}, code="400 Bad Request")
+            else:
+                try:
+                    i2c.writeto(int(address), bytes([ord('A')]))
+                    http_send_json(conn, {"ok": True})
+                except Exception as e:
+                    http_send_json(conn, {"ok": False, "error": str(e)}, code="500 Internal Server Error")
+
+        elif route == "/api/modules" and method == "POST":
+            data = parse_json_body(req)
+            address = data.get("address")
+            new_address = data.get("new_address", address)
+            speed = data.get("speed")
+            offset = data.get("offset")
+            if address is None or speed is None or offset is None or new_address is None:
+                http_send_json(conn, {"ok": False, "error": "Missing fields."}, code="400 Bad Request")
+            else:
+                try:
+                    ok = update_module_params(int(address), int(speed), int(offset), int(new_address))
+                except (ValueError, TypeError):
+                    http_send_json(conn, {"ok": False, "error": "Invalid field values."}, code="400 Bad Request")
+                    ok = None
+                if ok is True:
+                    http_send_json(conn, {"ok": True})
+                elif ok is False:
+                    http_send_json(conn, {"ok": False, "error": "I2C write failed."}, code="500 Internal Server Error")
+
+        elif route == "/api/modules" and method == "GET":
+            addresses = sorted(i2c.scan())
+            modules = [read_module_params(a) for a in addresses]
+            http_send_json(conn, modules)
+
+        elif route == "/api/timezone" and method == "GET":
+            zones = tz.zone_list()
+            http_send_json(conn, {"zones": zones, "current": current_timezone})
+
+        elif route.startswith("/assets/"):
+            filename = route.lstrip("/")
+            http_send_file(conn, filename)
+
+        elif route == "/" or route == "/index.html":
+            http_send_file(conn, "index.html")
+
+        else:
+            http_send_file(conn, "index.html")
+
+    except Exception as e:
+        print(f"Unable to process request:")
+        sys.print_exception(e)
+        if conn:
+            try:
+                http_send(conn, "Error: {}".format(e), code="500 Internal Server Error", content_type="text/plain")
+            except:
+                pass
+    finally:
+        if conn:
+            conn.close()
+
+
+# ----------------------------
+# Background tasks
+# ----------------------------
+def tick():
+    global minutes, last_text, last_temp_update, last_ntp_sync
+    actual_time = time.time() + tz.get_offset(current_timezone)
+    current_time = time.localtime(actual_time)
+    hours = current_time[3]
+    current_minutes = current_time[4]
+
+    if mode == MODE_TIME:
+        if current_minutes != minutes:
+            minutes = current_minutes
+            last_text = "{:02d}{:02d}".format(hours, minutes)
+            print_string(last_text)
+
+    elif mode == MODE_TEMP:
+        if time.time() - last_temp_update >= 60:
+            last_temp_update = time.time()
+            last_text = display_web_temp() or last_text
+
+    # Periodic NTP re-sync (every hour)
+    if time.time() - last_ntp_sync >= 3600:
+        sync_time()
+        last_ntp_sync = time.time()
+
+
+# ----------------------------
 # Main loop
 # ----------------------------
 while True:
@@ -652,203 +859,9 @@ while True:
             conn, _ = server.accept()
         except OSError:
             conn = None
-
         if conn:
-            try:
-                req = read_http_request(conn)
-                if not req:
-                    conn.close()
-                    continue
-                line = req.split("\r\n", 1)[0]
-                parts = line.split()
-                path = parts[1] if len(parts) >= 2 else "/"
-
-                method = parts[0] if parts else "GET"
-                route, _ = parse_query(path)
-
-                # Parse POST body or fall back to query string
-                if method == "POST":
-                    body = req.split("\r\n\r\n", 1)[1] if "\r\n\r\n" in req else ""
-                    params = parse_form(body)
-                else:
-                    _, params = parse_query(path)
-
-                if route == "/api/state":
-                    http_send_json(conn, {
-                        "mode": mode,
-                        "text": last_text,
-                        "status": status_line,
-                    })
-
-                elif route == "/api/text" and method == "POST":
-                    data = parse_json_body(req)
-                    t = (data.get("text", "") or "").upper()
-                    if t:
-                        last_text = t
-                        mode = MODE_TEXT
-                        print_string(last_text)
-                        status_line = "Displayed: {}".format(last_text)
-                        http_send_json(conn, {"ok": True, "status": status_line})
-                    else:
-                        http_send_json(conn, {"ok": False, "error": "No text provided."}, code="400 Bad Request")
-
-                elif route == "/api/mode" and method == "POST":
-                    data = parse_json_body(req)
-                    m = data.get("mode", "")
-                    if m in (MODE_TIME, MODE_TEMP):
-                        mode = m
-                        status_line = "Switched to {}".format(mode)
-                        if mode == MODE_TEMP:
-                            last_temp_update = 0
-                        http_send_json(conn, {"ok": True, "status": status_line})
-                    else:
-                        http_send_json(conn, {"ok": False, "error": "Unknown mode."}, code="400 Bad Request")
-
-                elif route == "/api/8ball" and method == "POST":
-                    last_text = eightball_roll()
-                    mode = MODE_TEXT
-                    status_line = "Shaking..."
-                    http_send_json(conn, {"ok": True, "text": last_text, "status": status_line})
-
-                elif route == "/api/home" and method == "POST":
-                    home_all()
-                    status_line = "Homing..."
-                    http_send_json(conn, {"ok": True, "status": status_line})
-
-                elif route == "/api/claude" and method == "POST":
-                    data = parse_json_body(req)
-                    prompt = data.get("prompt", "").strip()
-                    if prompt:
-                        status_line = "Asking Claude..."
-                        http_send_json(conn, {"ok": True, "status": status_line})
-                        conn.close()
-                        conn = None
-                        result = call_claude(prompt)
-                        last_text = result
-                        mode = MODE_TEXT
-                        print_string(last_text)
-                        status_line = "Claude: {}".format(last_text)
-                    else:
-                        http_send_json(conn, {"ok": False, "error": "No prompt provided."}, code="400 Bad Request")
-
-                elif route == "/api/setup/wifi" and method == "POST":
-                    import machine
-                    data = parse_json_body(req)
-                    new_ssid = data.get("ssid", "").strip()
-                    new_password = data.get("password", "")
-                    if new_ssid:
-                        save_wifi_config(new_ssid, new_password)
-                        http_send_json(conn, {"ok": True})
-                        conn.close()
-                        conn = None
-                        sleep(1)
-                        machine.reset()
-                    else:
-                        http_send_json(conn, {"ok": False, "error": "SSID cannot be empty."}, code="400 Bad Request")
-
-                elif route == "/api/setup/apikey" and method == "POST":
-                    data = parse_json_body(req)
-                    key = data.get("key", "").strip()
-                    if key:
-                        save_api_key(key)
-                        http_send_json(conn, {"ok": True})
-                    else:
-                        http_send_json(conn, {"ok": False, "error": "API key cannot be empty."}, code="400 Bad Request")
-
-                elif route == "/api/setup/timezone" and method == "POST":
-                    data = parse_json_body(req)
-                    new_zone = data.get("zone", "")
-                    if not new_zone or new_zone not in tz.ZONES:
-                        http_send_json(conn, {"ok": False, "error": "Unknown timezone"}, code="400 Bad Request")
-                    else:
-                        save_timezone(new_zone)
-                        current_timezone = new_zone
-                        http_send_json(conn, {"ok": True})
-
-                elif route == "/api/modules/identify" and method == "POST":
-                    data = parse_json_body(req)
-                    address = data.get("address")
-                    if address is None:
-                        http_send_json(conn, {"ok": False, "error": "Missing address."}, code="400 Bad Request")
-                    else:
-                        try:
-                            i2c.writeto(int(address), bytes([ord('A')]))
-                            http_send_json(conn, {"ok": True})
-                        except Exception as e:
-                            http_send_json(conn, {"ok": False, "error": str(e)}, code="500 Internal Server Error")
-
-                elif route == "/api/modules" and method == "POST":
-                    data = parse_json_body(req)
-                    address = data.get("address")
-                    new_address = data.get("new_address", address)
-                    speed = data.get("speed")
-                    offset = data.get("offset")
-                    if address is None or speed is None or offset is None or new_address is None:
-                        http_send_json(conn, {"ok": False, "error": "Missing fields."}, code="400 Bad Request")
-                    else:
-                        try:
-                            ok = update_module_params(int(address), int(speed), int(offset), int(new_address))
-                        except (ValueError, TypeError):
-                            http_send_json(conn, {"ok": False, "error": "Invalid field values."}, code="400 Bad Request")
-                            ok = None
-                        if ok is True:
-                            http_send_json(conn, {"ok": True})
-                        elif ok is False:
-                            http_send_json(conn, {"ok": False, "error": "I2C write failed."}, code="500 Internal Server Error")
-
-                elif route == "/api/modules" and method == "GET":
-                    addresses = sorted(i2c.scan())
-                    modules = [read_module_params(a) for a in addresses]
-                    http_send_json(conn, modules)
-
-                elif route == "/api/timezone" and method == "GET":
-                    zones = tz.zone_list()
-                    http_send_json(conn, {"zones": zones, "current": current_timezone})
-
-                elif route.startswith("/assets/"):
-                    filename = route.lstrip("/")  # "assets/index.js"
-                    http_send_file(conn, filename)
-
-                elif route == "/" or route == "/index.html":
-                    http_send_file(conn, "index.html")
-                else:
-                    # SPA fallback — let the client router handle it
-                    http_send_file(conn, "index.html")
-
-            except Exception as e:
-                print(f"Unable to process request:")
-                sys.print_exception(e)
-                try:
-                    http_send(conn, "Error: {}".format(e), code="500 Internal Server Error", content_type="text/plain")
-                except:
-                    pass
-            finally:
-                conn.close()
-
-        # Mode tasks (time/temp updates)
-        actual_time = time.time() + tz.get_offset(current_timezone)
-        current_time = time.localtime(actual_time)
-        hours = current_time[3]
-        current_minutes = current_time[4]
-
-        if mode == MODE_TIME:
-            if current_minutes != minutes:
-                minutes = current_minutes
-                last_text = "{:02d}{:02d}".format(hours, minutes)
-                print_string(last_text)
-
-        elif mode == MODE_TEMP:
-            if time.time() - last_temp_update >= 60:
-                last_temp_update = time.time()
-                last_text = display_web_temp() or last_text
-
-        # Periodic NTP re-sync (every hour)
-        if time.time() - last_ntp_sync >= 3600:
-            sync_time()
-            last_ntp_sync = time.time()
-
-        # MODE_TEXT: do nothing; it stays until user changes mode
-
+            handle_request(conn)
+        tick()
     except Exception as e:
         print("Loop error:", e)
 
