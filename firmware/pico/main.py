@@ -70,9 +70,11 @@ def load_timezone():
         return "UTC"
 
 def save_timezone(zone):
+    global current_timezone
     try:
         with open(TIMEZONE_CONFIG_FILE, "w") as f:
             ujson.dump({"zone": zone}, f)
+        current_timezone = zone
         return True
     except Exception as e:
         print("Failed to save timezone:", e)
@@ -701,7 +703,6 @@ def handle_request(conn):
                 http_send_json(conn, {"ok": False, "error": "Unknown timezone"}, code="400 Bad Request")
             else:
                 save_timezone(new_zone)
-                current_timezone = new_zone
                 http_send_json(conn, {"ok": True})
 
         elif route == "/api/modules/identify" and method == "POST":
