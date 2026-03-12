@@ -650,7 +650,10 @@ def handle_request(conn):
                 mode = m
                 status_line = "Switched to {}".format(mode)
                 if mode == MODE_TIME:
-                    minutes = None  # force immediate display update on next tick
+                    t = time.localtime(time.time() + tz.get_offset(current_timezone))
+                    minutes = t[4]
+                    last_text = "{:02d}{:02d}".format(t[3], t[4])
+                    print_string(last_text)
                 elif mode == MODE_TEMP:
                     last_temp_update = 0
                 http_send_json(conn, {"ok": True, "status": status_line})
