@@ -221,7 +221,7 @@ def start_ap_provisioning():
     Connect to '{AP_SSID}' (pw: '{AP_PASSWORD}'), then open http://192.168.4.1/
     Saves credentials to flash and resets the device when submitted.
     """
-    import machine
+    import machine  # inline: only needed on the AP provisioning path, not at normal boot
 
     # Ensure STA interface is down to avoid conflicts
     sta = network.WLAN(network.STA_IF)
@@ -469,7 +469,7 @@ CLAUDE_SYSTEM = (
 )
 
 def call_claude(prompt):
-    import ssl
+    import ssl  # inline: ssl is RAM-heavy; defer loading until Claude is actually called
     if not api_key:
         print("No Claude API key configured")
         return "ERR "
@@ -673,7 +673,7 @@ def handle_request(conn):
                 http_send_json(conn, {"ok": False, "error": "No prompt provided."}, code="400 Bad Request")
 
         elif route == "/api/setup/wifi" and method == "POST":
-            import machine
+            import machine  # inline: only needed on the reboot path, not at normal boot
             data = parse_json_body(req)
             new_ssid = data.get("ssid", "").strip()
             new_password = data.get("password", "")
