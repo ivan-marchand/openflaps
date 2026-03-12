@@ -1,8 +1,3 @@
-# Integrated version of your main.py:
-# - Keeps your I2C + NTP time display loop
-# - Adds a mini webserver to send text / switch modes
-# - WiFi credentials stored in flash (wifi_config.json), not hardcoded
-
 from time import sleep
 import time
 import urandom
@@ -24,10 +19,7 @@ TIMEZONE_CONFIG_FILE = "timezone_config.json"
 
 # I2C
 i2c = I2C(0, freq=100000, scl=Pin(1), sda=Pin(0))
-
-# Display addressing (your existing logic)
 BASE_ADDR = 0x11   # first character module address
-# ----------------------------
 
 LAT = 0.0
 LON = 0.0
@@ -60,9 +52,11 @@ def load_api_key():
         return ""
 
 def save_api_key(key):
+    global api_key
     try:
         with open(API_CONFIG_FILE, "w") as f:
             ujson.dump({"key": key}, f)
+        api_key = key
         return True
     except Exception as e:
         print("Failed to save API key:", e)
@@ -88,35 +82,28 @@ def save_timezone(zone):
 # HTTP helpers (needed by both provisioning and main server)
 # ----------------------------
 def url_decode(s):
-    out = ""
+    out = []
     i = 0
     while i < len(s):
         c = s[i]
         if c == '+':
-            out += ' '
+            out.append(' ')
         elif c == '%' and i + 2 < len(s):
             try:
-                out += chr(int(s[i+1:i+3], 16))
+                out.append(chr(int(s[i+1:i+3], 16)))
                 i += 2
             except:
-                out += c
+                out.append(c)
         else:
-            out += c
+            out.append(c)
         i += 1
-    return out
+    return "".join(out)
 
 def parse_query(path):
     if '?' not in path:
         return path, {}
     route, qs = path.split('?', 1)
-    params = {}
-    for part in qs.split('&'):
-        if '=' in part:
-            k, v = part.split('=', 1)
-            params[k] = url_decode(v)
-        else:
-            params[part] = ""
-    return route, params
+    return route, parse_form(qs)
 
 def http_send(conn, body, code="200 OK", content_type="text/html"):
     conn.send("HTTP/1.1 {}\r\n".format(code))
@@ -305,7 +292,7 @@ def start_ap_provisioning():
             print("Provisioning error:", e)
 
 def dechunk_http_body(body: bytes) -> bytes:
-    out = b""
+    out = []
     i = 0
     ln = len(body)
 
@@ -330,10 +317,10 @@ def dechunk_http_body(body: bytes) -> bytes:
         if i + size > ln:
             break
 
-        out += body[i:i+size]
+        out.append(body[i:i+size])
         i += size + 2
 
-    return out
+    return b"".join(out)
 
 def get_outdoor_temp():
     host = "api.open-meteo.com"
@@ -385,38 +372,8 @@ def display_web_temp():
     return txt
 
 # ----------------------------
-# I2C helpers (send 2 bytes)
+# I2C helpers
 # ----------------------------
-def update_offset(address, offset):
-    msg = bytes([ord('O'), offset & 0xFF])
-    try:
-        i2c.writeto(address, msg)
-    except:
-        print("Unable update offset")
-#update_offset(0x14, 20)
-
-def change_address(old_address, new_address):
-    msg = bytes([ord('C'), new_address & 0xFF])
-    try:
-        i2c.writeto(old_address, msg)
-    except:
-        print(f"Unable change address for {old_address}")
-#change_address(0x10, 0x14)
-
-def initialize_displays():
-    for address in i2c.scan():
-        try:
-            i2c.writeto(address, b'I\x00')
-        except:
-            print(f"Unable to Initialize display {address}")
-
-def display_address():
-    for address in i2c.scan():
-        try:
-            i2c.writeto(address, b'A\x00')
-        except:
-            print(f"Unable to Display {address}")
-
 def print_char(address: int, c: str):
     try:
         if c == "°":
@@ -499,8 +456,6 @@ def eightball_roll():
     return ans
 
 # ----------------------------
-# Wi-Fi + NTP
-# ----------------------------
 # Claude API
 # ----------------------------
 CLAUDE_SYSTEM = (
@@ -513,7 +468,6 @@ CLAUDE_SYSTEM = (
 
 def call_claude(prompt):
     import ssl
-    api_key = load_api_key()
     if not api_key:
         print("No Claude API key configured")
         return "ERR "
@@ -570,6 +524,8 @@ def call_claude(prompt):
         print("Claude API error:", e)
         return "ERR "
 
+# ----------------------------
+# WiFi + NTP
 # ----------------------------
 def connect_wifi():
     ssid, password = load_wifi_config()
@@ -628,17 +584,13 @@ last_temp_update = 0
 s = i2c.scan()
 while s == []:
     s = i2c.scan()
-    print(s)
 print("I2C devices:", [hex(a) for a in s])
 
 wlan, ip = connect_wifi()
 sync_time()
 last_ntp_sync = time.time()
 current_timezone = load_timezone()
-
-#initialize_displays()
-#change_address(0x10, 0x14)
-#display_address()
+api_key = load_api_key()
 
 server = start_server()
 
@@ -659,13 +611,6 @@ def handle_request(conn):
 
         method = parts[0] if parts else "GET"
         route, _ = parse_query(path)
-
-        # Parse POST body or fall back to query string
-        if method == "POST":
-            body = req.split("\r\n\r\n", 1)[1] if "\r\n\r\n" in req else ""
-            params = parse_form(body)
-        else:
-            _, params = parse_query(path)
 
         if route == "/api/state":
             http_send_json(conn, {
@@ -766,7 +711,7 @@ def handle_request(conn):
                 http_send_json(conn, {"ok": False, "error": "Missing address."}, code="400 Bad Request")
             else:
                 try:
-                    i2c.writeto(int(address), bytes([ord('A')]))
+                    i2c.writeto(int(address), bytes([ord('A'), 0x00]))
                     http_send_json(conn, {"ok": True})
                 except Exception as e:
                     http_send_json(conn, {"ok": False, "error": str(e)}, code="500 Internal Server Error")
@@ -827,24 +772,25 @@ def handle_request(conn):
 # ----------------------------
 def tick():
     global minutes, last_text, last_temp_update, last_ntp_sync
-    actual_time = time.time() + tz.get_offset(current_timezone)
-    current_time = time.localtime(actual_time)
-    hours = current_time[3]
-    current_minutes = current_time[4]
+    now = time.time()
 
     if mode == MODE_TIME:
+        actual_time = now + tz.get_offset(current_timezone)
+        current_time = time.localtime(actual_time)
+        hours = current_time[3]
+        current_minutes = current_time[4]
         if current_minutes != minutes:
             minutes = current_minutes
             last_text = "{:02d}{:02d}".format(hours, minutes)
             print_string(last_text)
 
     elif mode == MODE_TEMP:
-        if time.time() - last_temp_update >= 60:
-            last_temp_update = time.time()
+        if now - last_temp_update >= 60:
+            last_temp_update = now
             last_text = display_web_temp() or last_text
 
     # Periodic NTP re-sync (every hour)
-    if time.time() - last_ntp_sync >= 3600:
+    if now - last_ntp_sync >= 3600:
         sync_time()
         last_ntp_sync = time.time()
 
