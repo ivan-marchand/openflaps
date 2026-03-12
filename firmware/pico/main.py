@@ -365,11 +365,15 @@ def get_outdoor_temp():
         print("Weather error:", e)
         return None
 
-def display_web_temp():
+def display_web_temp(current=""):
     temp = get_outdoor_temp()
     if temp is None:
-        print_string("ERR ")
-        return "ERR "
+        if not current:
+            # No previous temperature shown — display ERR so the screen isn't blank
+            print_string("ERR ")
+            return "ERR "
+        # Already showing a temperature — keep it and retry next interval
+        return None
 
     temp = 32 + temp * 9/5
     t = int(round(temp))
@@ -794,7 +798,7 @@ def tick():
     elif mode == MODE_TEMP:
         if now - last_temp_update >= TEMP_UPDATE_INTERVAL:
             last_temp_update = now
-            last_text = display_web_temp() or last_text
+            last_text = display_web_temp(last_text) or last_text
 
     # Periodic NTP re-sync
     if now >= next_ntp_sync:
