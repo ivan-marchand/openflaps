@@ -24,6 +24,10 @@ BASE_ADDR = 0x11   # first character module address
 LAT = 42.4618
 LON = -71.3642
 
+NTP_RETRY_INTERVAL = 300    # seconds between NTP retries on failure
+NTP_SYNC_INTERVAL = 3600    # seconds between successful NTP syncs
+TEMP_UPDATE_INTERVAL = 60   # seconds between outdoor temperature refreshes
+
 # ----------------------------
 # WiFi credential storage (flash filesystem = persistent like EEPROM)
 # ----------------------------
@@ -554,8 +558,10 @@ def sync_time():
     try:
         ntptime.settime()
         print("Time set via NTP")
+        return True
     except Exception as e:
         print("Error syncing time", e)
+        return False
 
 def start_server():
     addr = socket.getaddrinfo("0.0.0.0", 80)[0][-1]
@@ -589,8 +595,8 @@ while s == []:
 print("I2C devices:", [hex(a) for a in s])
 
 wlan, ip = connect_wifi()
-sync_time()
-last_ntp_sync = time.time()
+_synced = sync_time()
+next_ntp_sync = time.time() + (NTP_SYNC_INTERVAL if _synced else NTP_RETRY_INTERVAL)
 current_timezone = load_timezone()
 api_key = load_api_key()
 
@@ -772,7 +778,7 @@ def handle_request(conn):
 # Background tasks
 # ----------------------------
 def tick():
-    global minutes, last_text, last_temp_update, last_ntp_sync
+    global minutes, last_text, last_temp_update, next_ntp_sync
     now = time.time()
 
     if mode == MODE_TIME:
@@ -786,14 +792,14 @@ def tick():
             print_string(last_text)
 
     elif mode == MODE_TEMP:
-        if now - last_temp_update >= 60:
+        if now - last_temp_update >= TEMP_UPDATE_INTERVAL:
             last_temp_update = now
             last_text = display_web_temp() or last_text
 
-    # Periodic NTP re-sync (every hour)
-    if now - last_ntp_sync >= 3600:
-        sync_time()
-        last_ntp_sync = time.time()
+    # Periodic NTP re-sync
+    if now >= next_ntp_sync:
+        _synced = sync_time()
+        next_ntp_sync = time.time() + (NTP_SYNC_INTERVAL if _synced else NTP_RETRY_INTERVAL)
 
 
 # ----------------------------
