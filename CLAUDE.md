@@ -67,6 +67,9 @@ Or just run `./firmware/pico/deploy.sh` which builds, copies, and uploads everyt
 | `api.getModules()` | `GET /api/modules` |
 | `api.updateModule(...)` | `POST /api/modules` |
 | `api.identifyModule(addr)` | `POST /api/modules/identify` |
+| `api.powerDownModule(addr)` | `POST /api/modules/power_down` |
+| `api.getEnergy()` | `GET /api/energy` |
+| `api.saveEnergy(maxConcurrent)` | `POST /api/setup/energy` |
 
 ## Key Files
 
@@ -83,9 +86,10 @@ Config is stored in JSON files on Pico flash — all three are gitignored:
 - `wifi_config.json` — `{"ssid": "...", "password": "..."}`
 - `api_config.json` — `{"key": "sk-ant-..."}` — Claude API key
 - `timezone_config.json` — `{"zone": "America/New_York"}` — IANA timezone name
+- `energy_config.json` — `{"max_concurrent": 4}` — max modules allowed to move simultaneously
 
 Constants in `main.py`:
-- `BASE_ADDR = 0x11` — First I2C device address (0x10 is reserved for pairing mode)
+- `BASE_ADDR = 0x11` — First I2C device address (0x10 is reserved for pairing mode). Modules are wired right-to-left, so `BASE_ADDR` is the rightmost character and address increases leftward.
 - `AP_SSID = "OpenFlap-Setup"`, `AP_PASSWORD = "openflap1"` — AP mode credentials
 - `LAT = 0.0`, `LON = 0.0` — Location for weather API (open-meteo)
 - NTP re-syncs every 3600 seconds
@@ -98,25 +102,43 @@ Constants in `main.py`:
 | `MODE_TEMP` | `"temp"` | Shows outdoor °F via open-meteo, updated every 60 s |
 | `MODE_TEXT` | `"text"` | Shows user text or Claude response, static |
 
-Display is 4 characters wide. `print_string(s)` pops characters left-to-right.
+Display is 4 characters wide. `print_string(s)` left-aligns/pads `s` to the module count, then reverses it before assigning to addresses in increasing order, since modules are wired right-to-left (`BASE_ADDR` is the rightmost character). Modules are dispatched leftmost (highest address) first, like natural left-to-right writing.
+
+## Energy Saving
+
+- By default, each ATtiny84 de-energizes its stepper coils (`PowerManagedStepper.deactivate()`) as soon as it reaches its target position or finishes homing, so idle modules draw no holding current. Because the 28BYJ-48 has no absolute position sensor, de-energized coils mean the rotor can drift under load — so the next `D` (display character) command re-homes first if the coils are off, before moving to the new target.
+- The `D` command takes an optional `keep_energized` byte (see protocol table below) so a mode that updates frequently (e.g. `MODE_TIME`, `MODE_TEMP` — every 60s) can leave coils powered between updates and skip the re-home each time, since re-homing every minute would be slower, noisier, and wear the limit switch. `main.py` passes `keep_energized=True` for those modes and leaves it off (default) for static text (`MODE_TEXT`, 8-ball, Claude responses), which can sit idle for a long time and benefits most from de-energizing.
+- A `P` command explicitly de-energizes a module's coils on demand (no-op while it's busy); reachable from the Pico/UI via `POST /api/modules/power_down`.
+- Each module's live `energized` state is included in `GET /api/modules`, so the number of currently-energized modules can be used as a rough live estimate of holding-current draw. The ModulesPage shows it per module with a "PWR OFF" button.
+- `print_string(s)` on the Pico limits how many modules are allowed to move at the same time, capping peak current draw across the bus. It dispatches `D` commands up to `max_concurrent_modules` at a time, then polls each module's `busy` status byte and starts the next queued character as slots free up.
+- `max_concurrent_modules` defaults to `4` (no limiting) and is configurable via `GET /api/energy` / `POST /api/setup/energy` (SetupPage "Max Modules Moving at Once"). Lowering it trades display update latency for lower peak power draw.
 
 ## ATtiny84 I2C Protocol
 
-- Read: `i2c.readfrom(address, 3)` → `[speed, offset, avg_missed_steps]`
-- Write commands (2 bytes each):
+- Read: `i2c.readfrom(address, 5)` → `[speed, offset, avg_missed_steps, busy, energized]` (`busy` is 1 while homing or moving to a target; `energized` is 1 while coils are powered)
+- Write commands (2 bytes, except `D` which takes an optional 3rd byte):
 
-| Byte 0 | Byte 1 | Action |
-|---|---|---|
-| `I` | `\x00` | Initialize / home |
-| `D` | `<char>` | Display character |
-| `S` | `<speed>` | Set speed (saved to EEPROM) |
-| `O` | `<offset>` | Set offset (saved to EEPROM) |
-| `C` | `<addr>` | Change I2C address (saved to EEPROM) |
-| `A` | `\x00` | Display address character |
+| Byte 0 | Byte 1 | Byte 2 | Action |
+|---|---|---|---|
+| `I` | `\x00` | — | Initialize / home |
+| `D` | `<char>` | `<keep_energized>` (optional, default 0) | Display character. If the coils are currently off, the module re-homes first since position may have drifted, then moves. `keep_energized` nonzero leaves coils powered after the move (skips re-homing next time); 0 (default) de-energizes once idle. |
+| `P` | `\x00` | — | De-energize coils now. No-op if the module is currently homing or moving. |
+| `S` | `<speed>` | — | Set speed (saved to EEPROM) |
+| `O` | `<offset>` | — | Set offset (saved to EEPROM) |
+| `C` | `<addr>` | — | Change I2C address (saved to EEPROM) |
+| `A` | `\x00` | — | Display address character |
 
 **Critical:** Wait 20 ms between writes — ATtiny has a single-slot message buffer and `EEPROM.write` blocks ~3.3 ms.
 
 Character set (45 chars): ` ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:-!?/°`
+
+## Physical Button (per module)
+
+Each ATtiny84 module has a physical button (`BUTTON_PIN`), independent of I2C/the Pico:
+- **Short press** — advances that module one character forward through `char_set` (`next_char()`), wrapping at the end. Coils stay energized after the step (like `keep_energized`) so repeated presses don't each pay for a re-home; unlike a Pico-driven hold there's no guaranteed follow-up command, so it auto-de-energizes after `BUTTON_IDLE_TIMEOUT_MS` (10s) of inactivity, or immediately once a `D` command from the Pico governs the hold instead. Useful for manually calibrating/testing a single module.
+- **Long press (3s)** — enters pairing mode: sets the module's I2C address to `0x10` and re-homes as visual confirmation.
+
+A fresh module (`EEPROM_I2C_ADDRESS` unset, i.e. `0xFF`) does **not** join the I2C bus or home at boot — it stays idle until the user long-presses the button to explicitly enter pairing mode. This keeps multiple newly wired-up modules from all defaulting to the same `0x10` address (and colliding on the bus) before they've been individually assigned a real address.
 
 ## Deploying to Pico
 

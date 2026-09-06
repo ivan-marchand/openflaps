@@ -20,8 +20,11 @@ export const api = {
   saveApiKey: (key) => post('/api/setup/apikey', { key }),
   getTimezone: () => fetch(BASE + '/api/timezone').then(r => r.json()),
   saveTimezone: (zone) => post('/api/setup/timezone', { zone }),
+  getEnergy: () => fetch(BASE + '/api/energy').then(r => r.json()),
+  saveEnergy: (maxConcurrent) => post('/api/setup/energy', { max_concurrent: maxConcurrent }),
   getModules: () => fetch(BASE + '/api/modules').then(r => r.json()),
   updateModule: (address, newAddress, speed, offset) =>
     post('/api/modules', { address, new_address: newAddress, speed, offset }),
   identifyModule: (address) => post('/api/modules/identify', { address }),
+  powerDownModule: (address) => post('/api/modules/power_down', { address }),
 }
