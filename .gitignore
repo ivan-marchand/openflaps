@@ -13,3 +13,9 @@ firmware/pico/timezone_config.json
 
 # macOS
 .DS_Store
+
+# PlatformIO host test build
+firmware/attiny84/test-host/.pio/
+
+# emscripten simulator build output
+firmware/attiny84/sim/web/sim.wasm.js
