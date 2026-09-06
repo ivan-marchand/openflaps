@@ -117,7 +117,26 @@ void module_press_button(Module* m, uint32_t duration_ms) {
 EMSCRIPTEN_KEEPALIVE uint8_t  module_get_address(Module* m) { return m->cfg.i2c_address; }
 EMSCRIPTEN_KEEPALIVE uint8_t  module_get_speed(Module* m)   { return m->cfg.speed; }
 EMSCRIPTEN_KEEPALIVE int      module_get_offset(Module* m)  { return m->cfg.offset; }
+
+// The character the firmware has TARGETED (set the instant a 'D' command lands).
 EMSCRIPTEN_KEEPALIVE int      module_get_current_char(Module* m) { return (unsigned char)m->controller.current_char(); }
+
+// The character physically visible at the current rotor angle. On real hardware
+// the flaps are on the rotor, so every intermediate glyph shows as the motor
+// steps toward the target; the firmware only tracks _position, so the sim
+// derives the visible glyph here. Inverse of display_char()'s target math
+// (target = offset + round(idx * steps_per_rev / count), mod steps_per_rev).
+EMSCRIPTEN_KEEPALIVE
+int module_get_visible_char(Module* m) {
+    const int32_t count = (int32_t)strlen(char_set);
+    const int32_t n = (int32_t)m->controller.steps_per_rev();
+    const double steps_per_char = (double)n / count;
+    int32_t raw = (int32_t)m->controller.position() - (int32_t)m->cfg.offset;
+    raw %= n;
+    if (raw < 0) raw += n;
+    int32_t idx = (int32_t)(raw / steps_per_char + 0.5) % count;   // nearest flap
+    return (unsigned char)char_set[idx];
+}
 EMSCRIPTEN_KEEPALIVE uint32_t module_get_position(Module* m){ return m->controller.position(); }
 EMSCRIPTEN_KEEPALIVE uint32_t module_get_target(Module* m)  { return m->controller.target_position(); }
 EMSCRIPTEN_KEEPALIVE int      module_is_homing(Module* m)   { return m->controller.is_homing() ? 1 : 0; }

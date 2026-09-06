@@ -33,6 +33,7 @@ const api = {
   speed: cwrap('module_get_speed', 'number', ['number']),
   offset:cwrap('module_get_offset', 'number', ['number']),
   char:  cwrap('module_get_current_char', 'number', ['number']),
+  visChar: cwrap('module_get_visible_char', 'number', ['number']),
   pos:   cwrap('module_get_position', 'number', ['number']),
   target:cwrap('module_get_target', 'number', ['number']),
   homing:cwrap('module_is_homing', 'number', ['number']),
@@ -77,8 +78,11 @@ function renderFlap(ch) {
   if (ch === shownChar) return;
   shownChar = ch;
   tileCharEl.textContent = ch === ' ' ? ' ' : ch;
+  // Restart the one-shot flip animation on every glyph change so a sweep
+  // through many characters actually flaps rather than freezing mid-tilt.
+  tileEl.classList.remove('flipping');
+  void tileEl.offsetWidth;
   tileEl.classList.add('flipping');
-  setTimeout(() => tileEl.classList.remove('flipping'), 200);
 }
 
 // ---- inspector ----
@@ -88,7 +92,8 @@ function renderInspector() {
     ['address',  '0x' + api.addr(handle).toString(16).toUpperCase()],
     ['speed',    api.speed(handle)],
     ['offset',   api.offset(handle)],
-    ['char',     JSON.stringify(String.fromCharCode(api.char(handle)))],
+    ['target',   JSON.stringify(String.fromCharCode(api.char(handle)))],
+    ['showing',  JSON.stringify(String.fromCharCode(api.visChar(handle)))],
     ['position', api.pos(handle) + ' / ' + api.target(handle)],
     ['homing',   api.homing(handle) ? 'yes' : 'no'],
     ['moving',   api.moving(handle) ? 'yes' : 'no'],
@@ -126,12 +131,11 @@ function frame(now) {
     if (dtUs > 0) api.tick(handle, dtUs);
   }
   last = now;
-  // Flip the visual only once the stepper has actually settled. `char` is set
-  // the instant the 'D' command lands; the rotor takes time to get there, so
-  // flipping on `char` alone would show a move the model has not made yet.
-  if (!api.moving(handle) && !api.homing(handle)) {
-    renderFlap(String.fromCharCode(api.char(handle)));
-  }
+  // The flap shows the glyph physically under the rotor RIGHT NOW, derived from
+  // the stepper position — so it flaps through every intermediate character as
+  // the motor turns and settles on space (index 0) after homing, exactly like
+  // the hardware. `target` in the inspector is the commanded char.
+  renderFlap(String.fromCharCode(api.visChar(handle)));
   renderInspector();
   maybePersistAddr();
   requestAnimationFrame(frame);

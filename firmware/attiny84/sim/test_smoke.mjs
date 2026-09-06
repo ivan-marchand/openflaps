@@ -10,6 +10,7 @@ const module_new       = c('module_new', 'number', ['number', 'number', 'number'
 const module_i2c_write = c('module_i2c_write', 'number', ['number', 'number', 'number', 'number']);
 const module_tick      = c('module_tick', null, ['number', 'number']);
 const get_char         = c('module_get_current_char', 'number', ['number']);
+const get_vis_char     = c('module_get_visible_char', 'number', ['number']);
 const get_pos          = c('module_get_position', 'number', ['number']);
 const get_target       = c('module_get_target', 'number', ['number']);
 const is_homing        = c('module_is_homing', 'number', ['number']);
@@ -33,7 +34,12 @@ function display(ch) {
   assert.strictEqual(String.fromCharCode(get_char(h)), ch, `displays '${ch}'`);
   assert.strictEqual(is_moving(h), 0, `move settled for '${ch}'`);
   assert.strictEqual(get_pos(h), get_target(h), `reached target for '${ch}'`);
+  // Once settled, the glyph physically under the rotor equals the target.
+  assert.strictEqual(String.fromCharCode(get_vis_char(h)), ch, `visible glyph is '${ch}'`);
 }
+
+// After homing, position 0 -> the visible glyph is the space at char_set[0].
+assert.strictEqual(String.fromCharCode(get_vis_char(h)), ' ', 'homed rotor shows space');
 
 // 'A' is index 1 of the 45-char set -> target step 75.
 display('A');
