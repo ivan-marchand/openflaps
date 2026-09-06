@@ -26,18 +26,22 @@ static const float     GEAR_RATIO   = 50.0f / 30.0f;
 struct Module {
     SplitFlapController controller;
     ModuleConfig        cfg;
-    uint8_t             eeprom[3];
     Module()
         : controller(STEPS_PER_REV, GEAR_RATIO, PIN_M1, PIN_M2, PIN_M3, PIN_M4, PIN_LIMIT),
           cfg{0x10, 10, 0} {}
 };
 
-// Synthesise the home limit switch: HIGH within a step window around position 0.
+// Synthesise the home limit switch: HIGH over a step window just BEFORE wrap.
+// The window is wrap-side only because homing terminates on the switch's
+// release edge and sets _position = 0 there — position 0 is therefore where the
+// switch reads LOW. Reporting HIGH at 0 would make update()'s move-to-target
+// branch re-trigger home-correction (_position = 0) every ~61 steps, so the
+// rotor could never travel past the window.
 static void update_limit_switch(Module* m) {
     uint32_t pos = m->controller.position();
     uint32_t n   = m->controller.steps_per_rev();
     const uint32_t window = 60;          // must exceed the controller's >50 gate
-    g_limit_switch = (pos < window || pos > n - window) ? HIGH : LOW;
+    g_limit_switch = (pos > n - window) ? HIGH : LOW;
 }
 
 extern "C" {
@@ -53,9 +57,6 @@ Module* module_new(uint8_t eeprom_addr, uint8_t speed, int8_t offset) {
     Module* m = new Module();
     uint8_t a = (eeprom_addr == 0xFF) ? 0x10 : eeprom_addr;
     m->cfg = ModuleConfig{ a, speed, offset };
-    m->eeprom[0] = a;
-    m->eeprom[1] = speed;
-    m->eeprom[2] = (uint8_t)offset;
     m->controller.setup(speed, offset);
     m->controller.initialize();          // matches the .ino setup()
     return m;
@@ -66,10 +67,9 @@ EMSCRIPTEN_KEEPALIVE void module_free(Module* m) { delete m; }
 EMSCRIPTEN_KEEPALIVE
 int module_i2c_write(Module* m, uint8_t addr, int cmd, int data) {
     if (addr != m->cfg.i2c_address) return 0;
-    CommandEffect fx = handle_command(m->controller, m->cfg, (char)cmd, (char)data);
-    if (fx.write_speed)    m->eeprom[1] = m->cfg.speed;
-    if (fx.write_offset)   m->eeprom[2] = (uint8_t)m->cfg.offset;
-    if (fx.change_address) m->eeprom[0] = fx.new_address;
+    // The CommandEffect flags tell the .ino what to persist to EEPROM; here
+    // persistence lives in the page's localStorage, keyed off module_get_address.
+    (void)handle_command(m->controller, m->cfg, (char)cmd, (char)data);
     return 1;
 }
 
@@ -83,11 +83,17 @@ int module_i2c_read(Module* m, uint8_t addr, uint8_t* out3) {
 EMSCRIPTEN_KEEPALIVE
 void module_tick(Module* m, uint32_t dt_us) {
     const uint32_t SUB = 250;             // us per sub-step
+    // Hard cap so a huge dt_us (a backgrounded tab resuming, or a high rate
+    // multiplier) can never lock the caller up in one call. 20000 sub-steps is
+    // 5 s of simulated time — far more than any single animation frame needs.
+    const uint32_t MAX_SUBSTEPS = 20000;
     uint32_t remaining = dt_us;
-    while (remaining) {
+    uint32_t iters = 0;
+    while (remaining && iters < MAX_SUBSTEPS) {
         uint32_t chunk = remaining < SUB ? remaining : SUB;
         g_now_us += chunk;
         remaining -= chunk;
+        iters++;
         m->controller.update();
         update_limit_switch(m);
     }
@@ -101,7 +107,6 @@ void module_press_button(Module* m, uint32_t duration_ms) {
             break;
         case ButtonAction::PAIRING:
             m->cfg.i2c_address = 0x10;
-            m->eeprom[0] = 0x10;
             m->controller.initialize();
             break;
         case ButtonAction::NONE:

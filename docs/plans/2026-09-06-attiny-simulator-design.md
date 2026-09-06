@@ -162,6 +162,7 @@ Tests assert **actual current behaviour**. Any latent bug found (e.g. the `if (t
 A minimal `Arduino.h` replacement for the wasm build (selected by the build, not by `__AVR_ATtiny84__`):
 
 - Pin state: `uint8_t g_pin_mode[N]`, `uint8_t g_pin_out[N]`, `uint8_t g_pin_in[N]`. `digitalWrite` sets `g_pin_out`; `digitalRead` returns `g_pin_in` (driven by the sim — the limit switch) or `g_pin_out` (loopback for coils). `pinMode` records mode.
+- The home limit switch is **synthesised** from `controller.position()` (there is no physical switch). It must read HIGH only over a window on the **wrap side** of home — the last ~60 steps before `position` rolls over to 0 — and LOW at position 0 itself. Position 0 is the switch's *release* edge, which is exactly what the homing state machine uses to define it; a symmetric window that reads HIGH at 0 makes `update()`'s move-to-target branch re-run its home-correction (`_position = 0`) every ~61 steps, so no target beyond the window is ever reachable.
 - Clock: `micros()` / `millis()` read a `uint64_t g_now_us` advanced only by `module_tick`. Deterministic, JS-controlled — enables the speed multiplier and reproducible tests.
 - `INPUT`, `OUTPUT`, `INPUT_PULLUP`, `HIGH`, `LOW`, `abs`, and the integer types the headers use.
 - `Serial` → routes `print`/`println` to an imported JS function `sim_log(const char*)` so firmware `DBG_*` output (non-AVR branch) shows in a console pane.
@@ -203,7 +204,7 @@ typedef struct {
 void    module_state(Module*, ModuleState* out);
 ```
 
-Internally a `Module` owns a `SplitFlapController`, a `ModuleConfig`, and a byte array standing in for EEPROM. `module_i2c_write` → `handle_command` → apply `CommandEffect` to the EEPROM array (and update the config's address). `enter_pairing_mode` behaviour (address → 0x10, re-home) is reproduced when `classify_button_press` returns `PAIRING`.
+Internally a `Module` owns a `SplitFlapController` and a `ModuleConfig`. `module_i2c_write` → `handle_command`, which updates the config in place; the returned `CommandEffect` says what the real `.ino` would persist to EEPROM, but the simulator has no EEPROM array — persistence lives in the page's `localStorage`, keyed off `module_get_address`. `enter_pairing_mode` behaviour (address → 0x10, re-home) is reproduced when `classify_button_press` returns `PAIRING`.
 
 `char_set[_current_char_index]` needs a read accessor on `SplitFlapController` — add `char current_char() const;` to the header (trivial, also useful to the tests).
 

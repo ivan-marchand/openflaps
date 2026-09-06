@@ -123,13 +123,12 @@ void handle_button() {
   }
 }
 
+// Runs inside the Wire.onRequest ISR (clock-stretched on the bus): keep it
+// minimal. status_buffer[0]/[1] are already kept current by setup()/loop();
+// only the missed-step average needs refreshing here. The equivalent
+// module_status() helper is used by the simulator and the host tests.
 void request_event() {
-  uint8_t out[3];
-  ModuleConfig cfg{ 0, (uint8_t)status_buffer[0], (int8_t)status_buffer[1] };
-  module_status(controller, cfg, out);
-  status_buffer[0] = out[0];
-  status_buffer[1] = out[1];
-  status_buffer[2] = out[2];
+  status_buffer[2] = (char)controller.get_average_missed_steps();
   Wire.write(status_buffer, 3);
 }
 

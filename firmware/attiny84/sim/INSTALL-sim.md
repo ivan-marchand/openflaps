@@ -18,11 +18,22 @@ visual, interactive front end for the same code.
   `handle_command` directly — there is no bit/byte clock, no ACK/NACK framing,
   no bus arbitration), multiple modules, the Pico, WiFi, NTP, weather.
 - **Simulator-only modelling choice:** the home limit switch is synthesised
-  from the rotor position by `update_limit_switch` in `main.cpp` (the pin reads
-  HIGH within ~60 steps of position 0), since there is no physical switch in the
-  simulation. As a result `initialize()` self-completes: homing drives toward
-  position 0, the synthetic switch trips, and the state machine finishes on its
-  own with no external input.
+  from the rotor position by `update_limit_switch` in `main.cpp`, since there is
+  no physical switch in the simulation. The pin reads HIGH over the last ~60
+  steps *before* `position` wraps to 0, and **LOW at position 0 itself**. As a
+  result `initialize()` self-completes: homing drives toward home, the synthetic
+  switch trips, then releases, and the state machine finishes on its own with no
+  external input.
+
+  The window is deliberately **wrap-side only** — not symmetric around 0.
+  Position 0 is the switch's *release* edge; that release is precisely what
+  homing uses to define `_position = 0`. If the pin also read HIGH at 0, the
+  move-to-target branch of `SplitFlapController::update()` would see the same
+  engage-then-release pattern and re-run its home-correction (`_position = 0`)
+  roughly every 61 steps, so the rotor could never travel past the window and
+  only target 0 (space) would ever settle. `test_smoke.mjs` guards this by
+  asserting each displayed character actually settles (`module_is_moving` back
+  to 0 with `position == target`), not merely that `current_char` changed.
 
 ## Prerequisites
 
@@ -99,9 +110,11 @@ change `build.sh`'s modularize flags.
 
     node test_smoke.mjs               # -> "sim smoke test: OK"
 
-Exercises the C ABI directly: homing completes and resets position to 0, `D`/`A`
-display a character, a write to the wrong address is not ACKed, and a 3500 ms
-press enters pairing (address -> 0x10).
+Exercises the C ABI directly: homing completes and resets position to 0, `D`
+moves the rotor to a character **and settles there** (`'A'` -> step 75, `'Z'`
+-> step 1971, with `module_is_moving` back to 0 and `position == target`), a
+write to the wrong address is not ACKed, and a 3500 ms press enters pairing
+(address -> 0x10).
 
 ## Files
 

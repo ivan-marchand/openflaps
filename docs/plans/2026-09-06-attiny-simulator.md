@@ -1126,12 +1126,17 @@ struct Module {
           cfg{0x10, 10, 0} {}
 };
 
-// Synthesise the home limit switch: HIGH within a step window around position 0.
+// Synthesise the home limit switch: HIGH over a step window just BEFORE wrap.
+// The window is wrap-side ONLY. Homing terminates on the switch's release edge
+// and sets _position = 0 there, so position 0 is where the switch reads LOW.
+// A symmetric `pos < window || ...` window reports HIGH at 0 and makes
+// update()'s move-to-target branch re-trigger home-correction every ~61 steps,
+// so the rotor never passes the window and only target 0 (space) ever settles.
 static void update_limit_switch(Module* m) {
     uint32_t pos = m->controller.position();
     uint32_t n   = m->controller.steps_per_rev();
     const uint32_t window = 60;          // must exceed the controller's >50 gate
-    g_limit_switch = (pos < window || pos > n - window) ? HIGH : LOW;
+    g_limit_switch = (pos > n - window) ? HIGH : LOW;
 }
 
 extern "C" {
@@ -1217,6 +1222,8 @@ EMSCRIPTEN_KEEPALIVE int      module_get_missed(Module* m)  { return m->controll
 ```
 
 > NOTE: `update_limit_switch` is a **simulator modelling choice** — real hardware has a physical switch closing once per revolution; here it is derived from `position()`. State this in `INSTALL-sim.md`.
+>
+> The window must be **wrap-side only** (`pos > n - window`), never symmetric around 0. Homing ends on the switch's *release* edge and defines `_position = 0` there, so position 0 is a LOW reading. Reporting HIGH at 0 makes the move-to-target branch fire its home-correction (`_position = 0`) every ~61 steps and the rotor can never leave the window.
 
 - [ ] **Step 3: Write `sim/build.sh`**
 
@@ -1295,7 +1302,7 @@ console.log('sim smoke test: OK');
 - [ ] **Step 6: Run the smoke test**
 
 Run: `node firmware/attiny84/sim/test_smoke.mjs`
-Expected: `sim smoke test: OK`. If homing never completes, widen the `window` in `update_limit_switch` or raise the tick cap, and record the working values.
+Expected: `sim smoke test: OK`. The test asserts each displayed character actually **settles** (`module_is_moving` back to 0, `position == target`), not just that `current_char` changed — that is what catches a bad `update_limit_switch` window. If homing never completes, widen the `window` in `update_limit_switch` or raise the tick cap, and record the working values. If a move never settles, check the window is wrap-side only (see the note above).
 
 - [ ] **Step 7: Commit**
 
@@ -1712,8 +1719,9 @@ logic (`../split_flap_display_async/split_flap_controller.h` and
 - **Does not:** USI / `Wire` byte-level I2C timing (the page calls
   `handle_command` directly), multiple modules, the Pico, WiFi, NTP, weather.
 - **Simulator-only modelling choice:** the home limit switch is synthesised
-  from the rotor position (HIGH within ~60 steps of position 0), since there
-  is no physical switch.
+  from the rotor position (HIGH over the last ~60 steps *before* wrap, i.e.
+  approaching position 0 — never at or just after 0, which is the release edge
+  homing itself defines as LOW), since there is no physical switch.
 
 ## Build
 
