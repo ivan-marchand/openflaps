@@ -45,6 +45,7 @@
 #endif
 
 #include "split_flap_controller.h"
+#include "attiny_protocol.h"
 
 // EEPROM mapping
 #define EEPROM_I2C_ADDRESS 0
@@ -55,8 +56,7 @@ const uint32_t steps_per_revolution = 2048;  // for 28BYJ-48 "common" value
 
 
 // Button — interrupt-driven
-#define DEBOUNCE_MS 50
-#define LONG_PRESS_MS 3000
+// DEBOUNCE_MS / LONG_PRESS_MS are constexpr in attiny_protocol.h
 
 // uint8_t-backed enum: reads/writes are atomic on 8-bit AVR
 enum btn_state_t : uint8_t { BTN_IDLE,
@@ -124,7 +124,12 @@ void handle_button() {
 }
 
 void request_event() {
-  status_buffer[2] = controller.get_average_missed_steps();
+  uint8_t out[3];
+  ModuleConfig cfg{ 0, (uint8_t)status_buffer[0], (int8_t)status_buffer[1] };
+  module_status(controller, cfg, out);
+  status_buffer[0] = out[0];
+  status_buffer[1] = out[1];
+  status_buffer[2] = out[2];
   Wire.write(status_buffer, 3);
 }
 
@@ -194,39 +199,27 @@ void loop() {
     DBG_PRINT((uint8_t)data);
     DBG_PRINTLN(")");
 
-    if (command == 'I') {
-      // Initialized Display
-      controller.initialize();
-    } else if (command == 'D' && data != 0) {
-      // Display character
-      controller.display_char(data);
-    } else if (command == 'S') {
-      // Update Speed
-      controller.update_speed((uint8_t)data);
-      EEPROM.write(EEPROM_SPEED, (uint8_t)data);
-      status_buffer[0] = (uint8_t)data;
-    } else if (command == 'O') {
-      // Update Offset
-      controller.update_offset((uint8_t)data);
-      EEPROM.write(EEPROM_OFFSET, (uint8_t)data);
-      status_buffer[1] = (uint8_t)data;
-    } else if (command == 'C' && data > 0) {
-      // Change i2c address
-      EEPROM.write(EEPROM_I2C_ADDRESS, (uint8_t)data);
-      Wire.begin((uint8_t)data);
+    ModuleConfig cfg;
+    cfg.i2c_address = EEPROM.read(EEPROM_I2C_ADDRESS);
+    if (cfg.i2c_address == 0xFF) cfg.i2c_address = 0x10;
+    cfg.speed = status_buffer[0];
+    cfg.offset = (int8_t)status_buffer[1];
+
+    CommandEffect fx = handle_command(controller, cfg, command, data);
+
+    if (fx.write_speed) {
+      EEPROM.write(EEPROM_SPEED, cfg.speed);
+      status_buffer[0] = cfg.speed;
+    }
+    if (fx.write_offset) {
+      EEPROM.write(EEPROM_OFFSET, (uint8_t)cfg.offset);
+      status_buffer[1] = (uint8_t)cfg.offset;
+    }
+    if (fx.change_address) {
+      EEPROM.write(EEPROM_I2C_ADDRESS, fx.new_address);
+      Wire.begin(fx.new_address);
       Wire.onReceive(receive_event);
       Wire.onRequest(request_event);
-    } else if (command == 'A') {
-      // Display character corresponding to this device's I2C address
-      // 0x10-0x19 -> '0'-'9', 0x1A+ -> 'A'-'Z'
-      uint8_t addr = EEPROM.read(EEPROM_I2C_ADDRESS);
-      if (addr == 0xFF) addr = 0x10;
-      char c;
-      if (addr <= 0x19) c = '0' + (addr - 0x10);
-      else c = 'A' + (addr - 0x1A);
-      controller.display_char(c);
-    } else {
-      DBG_PRINTLN("Unknown command");
     }
 
     new_message = false;
