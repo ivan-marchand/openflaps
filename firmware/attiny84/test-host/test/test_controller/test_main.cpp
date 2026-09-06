@@ -14,8 +14,20 @@ static SplitFlapController make_controller() {
 // Run update() repeatedly, advancing time enough to fire one step each call,
 // until the controller is idle or we hit the call cap.
 static void run_until_idle(SplitFlapController &c, int max_calls = 20000) {
-    for (int i = 0; i < max_calls && c.is_busy(); i++) {
+    int i = 0;
+    for (; i < max_calls && c.is_busy(); i++) {
         sim_time_us += 4000;   // > any step delay used here
+        c.update();
+    }
+    // Fail loudly on non-termination instead of silently passing a stuck machine.
+    if (c.is_busy()) TEST_FAIL_MESSAGE("run_until_idle: still busy after max_calls");
+}
+
+// Drive update() n times, firing one step per call, with the limit switch
+// held at `sim_limit_state`.
+static void home_steps(SplitFlapController &c, int n) {
+    for (int i = 0; i < n; i++) {
+        sim_time_us += 4000;
         c.update();
     }
 }
@@ -77,6 +89,59 @@ void test_missed_steps_is_minus_one_initially(void) {
     TEST_ASSERT_EQUAL_INT8(-1, c.get_average_missed_steps());
 }
 
+// initialize() with the switch released starts in the seek-edge phase.
+void test_initialize_starts_homing(void) {
+    SplitFlapController c = make_controller();
+    c.setup(50, 0);
+    sim_limit_state = LOW;
+    c.initialize();
+    TEST_ASSERT_TRUE(c.is_homing());
+}
+
+// Full homing cycle from switch-released: seek edge -> engage (>50 steps)
+// -> release -> position resets to 0 and homing ends.
+void test_homing_completes_from_released(void) {
+    SplitFlapController c = make_controller();
+    c.setup(50, 0);
+
+    sim_limit_state = LOW;
+    c.initialize();
+    home_steps(c, 5);
+    TEST_ASSERT_TRUE(c.is_homing());
+
+    sim_limit_state = HIGH;     // switch engages
+    home_steps(c, 60);          // > 50 engaged steps
+    TEST_ASSERT_TRUE(c.is_homing());
+
+    sim_limit_state = LOW;      // switch releases -> edge found
+    home_steps(c, 3);
+    TEST_ASSERT_FALSE(c.is_homing());
+    TEST_ASSERT_EQUAL_UINT32(0, c.position());
+}
+
+// initialize() with the switch already engaged runs the clear-first phase,
+// then still completes a full homing cycle.
+void test_homing_completes_from_engaged(void) {
+    SplitFlapController c = make_controller();
+    c.setup(50, 0);
+
+    sim_limit_state = HIGH;
+    c.initialize();
+    TEST_ASSERT_TRUE(c.is_homing());
+    home_steps(c, 55);          // clearing
+
+    sim_limit_state = LOW;
+    home_steps(c, 5);           // clear done -> seek edge
+
+    sim_limit_state = HIGH;
+    home_steps(c, 60);          // engage
+
+    sim_limit_state = LOW;
+    home_steps(c, 3);           // release -> done
+    TEST_ASSERT_FALSE(c.is_homing());
+    TEST_ASSERT_EQUAL_UINT32(0, c.position());
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_steps_per_rev_uses_gear_ratio);
@@ -85,5 +150,8 @@ int main(int, char **) {
     RUN_TEST(test_next_char_advances_one);
     RUN_TEST(test_next_char_wraps);
     RUN_TEST(test_missed_steps_is_minus_one_initially);
+    RUN_TEST(test_initialize_starts_homing);
+    RUN_TEST(test_homing_completes_from_released);
+    RUN_TEST(test_homing_completes_from_engaged);
     return UNITY_END();
 }
