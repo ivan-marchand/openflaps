@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OpenFlaps — ATtiny84 Module Simulator</title>
+  <link rel="stylesheet" href="./sim.css" />
+</head>
+<body>
+  <h1>OPENFLAPS · ATTINY84 MODULE SIMULATOR</h1>
+  <p style="color:#667;max-width:52ch;font-size:0.8rem">
+    One split-flap module running the real firmware logic
+    (<code>split_flap_controller.h</code> + <code>attiny_protocol.h</code>) compiled to WebAssembly.
+    Byte-level I2C/USI timing is not modelled.
+  </p>
+
+  <div class="sim-wrap">
+    <div class="panel flap-stage">
+      <h2>Module</h2>
+      <div id="flap"></div>
+      <button id="btn" class="btn module-btn" title="Click = next char · Hold 3s = pairing">PRESS</button>
+      <div id="btn-hint" style="color:#667;font-size:0.7rem">hold 3s for pairing</div>
+    </div>
+
+    <div class="panel">
+      <h2>Inspector</h2>
+      <dl class="inspector" id="inspector"></dl>
+    </div>
+
+    <div class="panel" id="i2c-panel">
+      <h2>I2C console (as the Pico)</h2>
+      <!-- filled in Task 10 -->
+    </div>
+
+    <div class="panel">
+      <h2>Simulation</h2>
+      <div class="row">
+        <button class="btn" id="runpause">Pause</button>
+        <label>rate <input type="number" id="rate" value="20" min="1" max="500" /></label>
+      </div>
+      <div class="row">
+        <button class="btn" id="reset">Reset module</button>
+        <label><input type="checkbox" id="persist" checked /> remember address</label>
+      </div>
+      <div class="console" id="console"></div>
+    </div>
+  </div>
+
+  <script type="module" src="./sim.js"></script>
+</body>
+</html>
