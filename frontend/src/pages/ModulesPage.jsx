@@ -34,6 +34,18 @@ function ModuleRow({ module, onSaved, usedAddresses }) {
     module.missed_steps > 20 ? '#ff4444' :
     module.missed_steps > 5  ? '#f0a500' : '#888'
 
+  async function powerDown() {
+    setBusy(true)
+    setStatus('')
+    try {
+      const r = await api.powerDownModule(module.address)
+      setStatus(r.ok ? 'Powered down.' : r.error || 'Error.')
+      if (r.ok) onSaved()
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function save() {
     setBusy(true)
     setStatus('')
@@ -84,6 +96,9 @@ function ModuleRow({ module, onSaved, usedAddresses }) {
       <td style={{ color: missedColor, fontFamily: 'monospace' }}>
         {module.missed_steps === null ? '—' : `${module.missed_steps}`}
       </td>
+      <td style={{ color: module.energized === null ? '#888' : module.energized ? '#f0a500' : '#888', fontFamily: 'monospace' }}>
+        {module.energized === null ? '—' : module.energized ? 'ON' : 'off'}
+      </td>
       <td>
         <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
           <button class="btn" disabled={busy} onClick={save}
@@ -93,6 +108,10 @@ function ModuleRow({ module, onSaved, usedAddresses }) {
           <button class="btn" disabled={busy} onClick={() => api.identifyModule(module.address)}
             title="Display address on this module">
             ID
+          </button>
+          <button class="btn" disabled={busy || !module.energized} onClick={powerDown}
+            title="De-energize this module's coils now">
+            PWR OFF
           </button>
           {status && <span style="font-size:0.75rem; color:#888;">{status}</span>}
         </div>
@@ -137,7 +156,7 @@ export function ModulesPage() {
             <table style="width:100%; border-collapse:collapse;">
               <thead>
                 <tr>
-                  {['ADDR','SPEED','OFFSET','MISSED',''].map(h => (
+                  {['ADDR','SPEED','OFFSET','MISSED','ENERGIZED',''].map(h => (
                     <th key={h} style="text-align:left; padding:6px 8px; font-size:0.7rem; color:#888; letter-spacing:0.05em; border-bottom:1px solid #333;">{h}</th>
                   ))}
                 </tr>
