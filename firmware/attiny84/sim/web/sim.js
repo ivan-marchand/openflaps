@@ -126,19 +126,24 @@ function frame(now) {
     if (dtUs > 0) api.tick(handle, dtUs);
   }
   last = now;
-  renderFlap(String.fromCharCode(api.char(handle)));
+  // Flip the visual only once the stepper has actually settled. `char` is set
+  // the instant the 'D' command lands; the rotor takes time to get there, so
+  // flipping on `char` alone would show a move the model has not made yet.
+  if (!api.moving(handle) && !api.homing(handle)) {
+    renderFlap(String.fromCharCode(api.char(handle)));
+  }
   renderInspector();
   maybePersistAddr();
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
 
-// expose for Task 10
+// Exposed for ad-hoc debugging from the browser console only; nothing in the
+// page reads it back.
 window.__sim = { M, api, get handle() { return handle; }, log };
 
-// ---- I2C console (Task 10) ----
-const { api: sapi, log: slog } = window.__sim;
-const H = () => window.__sim.handle;
+// ---- I2C console ----
+const H = () => handle;
 const CH = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:-!?/°";
 
 const charSel = document.getElementById('i2c-char');
@@ -146,10 +151,16 @@ charSel.innerHTML = [...CH].map(
   (c) => `<option value="${c.charCodeAt(0)}">${c === ' ' ? '(space)' : c}</option>`
 ).join('');
 
-const targetAddr = () => Number(document.getElementById('i2c-addr').value) || 0x11;
+// `|| 0x11` would turn a deliberately typed 0 into 17 — only fall back when the
+// field is empty or non-numeric.
+const targetAddr = () => {
+  const raw = document.getElementById('i2c-addr').value.trim();
+  const n = Number(raw);
+  return raw !== '' && Number.isFinite(n) ? n : 0x11;
+};
 function send(cmd, data) {
-  const ack = sapi.write(H(), targetAddr(), cmd.charCodeAt(0), data & 0xff);
-  slog(`I2C -> 0x${targetAddr().toString(16)}  '${cmd}' ${data}   ${ack ? 'ACK' : 'no ACK'}`);
+  const ack = api.write(H(), targetAddr(), cmd.charCodeAt(0), data & 0xff);
+  log(`I2C -> 0x${targetAddr().toString(16)}  '${cmd}' ${data}   ${ack ? 'ACK' : 'no ACK'}`);
 }
 
 for (const b of document.querySelectorAll('#i2c-panel button[data-cmd]')) {
@@ -161,16 +172,16 @@ document.getElementById('i2c-setoffset').onclick = () => send('O', Number(docume
 document.getElementById('i2c-setaddr').onclick = () => send('C', Number(document.getElementById('i2c-newaddr').value));
 
 document.getElementById('i2c-read').onclick = () => {
-  const ptr = window.__sim.M._malloc(3);
-  const ack = sapi.readInto(H(), targetAddr(), ptr);
+  const ptr = M._malloc(3);
+  const ack = api.readInto(H(), targetAddr(), ptr);
   if (ack) {
-    const b = window.__sim.M.HEAPU8.subarray(ptr, ptr + 3);
+    const b = M.HEAPU8.subarray(ptr, ptr + 3);
     document.getElementById('i2c-status').textContent =
       `speed=${b[0]} offset=${(b[1] << 24) >> 24} missed=${(b[2] << 24) >> 24}`;
   } else {
     document.getElementById('i2c-status').textContent = 'no ACK';
   }
-  window.__sim.M._free(ptr);
+  M._free(ptr);
 };
 
 // ---- hold-to-pair button ----
@@ -181,8 +192,8 @@ const endPress = () => {
   if (!pressStart) return;
   const dur = Math.round(performance.now() - pressStart);
   pressStart = 0;
-  sapi.press(H(), dur);
-  slog(`button pressed ${dur} ms`);
+  api.press(H(), dur);
+  log(`button pressed ${dur} ms`);
 };
 btn.addEventListener('mousedown', startPress);
 btn.addEventListener('mouseup', endPress);

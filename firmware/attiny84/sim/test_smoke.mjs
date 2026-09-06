@@ -11,7 +11,9 @@ const module_i2c_write = c('module_i2c_write', 'number', ['number', 'number', 'n
 const module_tick      = c('module_tick', null, ['number', 'number']);
 const get_char         = c('module_get_current_char', 'number', ['number']);
 const get_pos          = c('module_get_position', 'number', ['number']);
+const get_target       = c('module_get_target', 'number', ['number']);
 const is_homing        = c('module_is_homing', 'number', ['number']);
+const is_moving        = c('module_is_moving', 'number', ['number']);
 const press            = c('module_press_button', null, ['number', 'number']);
 const get_addr         = c('module_get_address', 'number', ['number']);
 
@@ -22,10 +24,25 @@ for (let i = 0; i < 4000 && is_homing(h); i++) module_tick(h, 20000);
 assert.strictEqual(is_homing(h), 0, 'module finished homing');
 assert.strictEqual(get_pos(h), 0, 'position reset to 0 after homing');
 
-// Display 'A' and let the move settle.
-assert.strictEqual(module_i2c_write(h, 0x11, 'D'.charCodeAt(0), 'A'.charCodeAt(0)), 1);
-for (let i = 0; i < 20000; i++) module_tick(h, 20000);
-assert.strictEqual(String.fromCharCode(get_char(h)), 'A', "displays 'A'");
+// Display a character and let the move actually SETTLE. `moving` going back to
+// 0 with position == target is what proves the rotor reached the flap; a stuck
+// or endlessly home-corrected rotor still reports the right `char`.
+function display(ch) {
+  assert.strictEqual(module_i2c_write(h, 0x11, 'D'.charCodeAt(0), ch.charCodeAt(0)), 1);
+  for (let i = 0; i < 20000 && is_moving(h); i++) module_tick(h, 20000);
+  assert.strictEqual(String.fromCharCode(get_char(h)), ch, `displays '${ch}'`);
+  assert.strictEqual(is_moving(h), 0, `move settled for '${ch}'`);
+  assert.strictEqual(get_pos(h), get_target(h), `reached target for '${ch}'`);
+}
+
+// 'A' is index 1 of the 45-char set -> target step 75.
+display('A');
+assert.strictEqual(get_pos(h), 75, "'A' settles at step 75");
+
+// A high target exercises the whole revolution (this is what the old
+// "HIGH at position 0" limit-switch model made impossible to reach).
+display('Z');
+assert.ok(get_pos(h) > 1000, `'Z' settles past the home window (got ${get_pos(h)})`);
 
 // A wrong address is not ACKed.
 assert.strictEqual(module_i2c_write(h, 0x12, 'D'.charCodeAt(0), 'B'.charCodeAt(0)), 0);

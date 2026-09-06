@@ -153,10 +153,16 @@ All three are gitignored.
 ## Testing & Simulation
 
 - **ATtiny84 host unit tests:** `cd firmware/attiny84/test-host && python3 -m platformio test -e native`
-  (27 tests, PlatformIO `native` env + ArduinoFake + Unity). Covers the extracted
-  headers `split_flap_controller.h` (stepper timing, homing state machine,
+  (26 characterization tests + 1 toolchain-harness check, PlatformIO `native`
+  env + ArduinoFake + Unity). Covers the extracted headers
+  `split_flap_controller.h` (stepper timing, homing state machine,
   `display_char`/`next_char`) and `attiny_protocol.h` (`I/D/S/O/C/A` command
   handling, `module_status` byte layout, `classify_button_press`).
+- **ATtiny84 C++11 check:** `firmware/attiny84/check-cxx11.sh` — syntax-checks
+  both extracted headers at `-std=gnu++11 -Wall -Wextra -Werror` (what
+  ATTinyCore 1.5.2 builds them with). Neither the host suite nor the simulator
+  compiles at C++11, so this is the only guard against a newer-standard
+  construct creeping into the shared headers.
 - **ATtiny84 module simulator:** `firmware/attiny84/sim/` — see
   `firmware/attiny84/sim/INSTALL-sim.md`. Compiles the real controller +
   protocol headers to WebAssembly (`./build.sh` → git-ignored `web/sim.wasm.js`,
@@ -164,8 +170,10 @@ All three are gitignored.
   (`cd web && python3 -m http.server 8000`). ABI smoke test: `node test_smoke.mjs`.
   One module only; no USI/Wire byte-level timing.
 
-## No Automated Tests
+## Manual Testing (Pico / sketch)
 
-Pico (`firmware/pico/`) and the `.ino` sketch have no automated tests — testing
-there is manual via the web UI and serial debug output (`mpremote connect auto
-repl`). The ATtiny84 control/protocol logic is covered by the host suite above.
+Pico (`firmware/pico/`) and the `.ino` sketch itself have no automated tests —
+testing there is manual via the web UI and serial debug output (`mpremote
+connect auto repl`), plus an Arduino IDE **Verify** for the sketch. The ATtiny84
+control/protocol logic the sketch delegates to is covered by the host suite
+above.

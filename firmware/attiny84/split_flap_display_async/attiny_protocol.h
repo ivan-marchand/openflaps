@@ -3,19 +3,14 @@
 #include <Arduino.h>
 #include "split_flap_controller.h"
 
-// EEPROM byte layout (mirrors the #defines in the .ino).
-constexpr uint8_t EE_ADDR_I2C = 0;
-constexpr uint8_t EE_ADDR_SPEED = 1;
-constexpr uint8_t EE_ADDR_OFFSET = 2;
-
 // Button timing (were #defines in the .ino).
 constexpr uint32_t DEBOUNCE_MS = 50;
 constexpr uint32_t LONG_PRESS_MS = 3000;
 
 struct ModuleConfig {
-    uint8_t i2c_address;   // mirror of EEPROM[EE_ADDR_I2C]
-    uint8_t speed;         // mirror of EEPROM[EE_ADDR_SPEED]
-    int8_t  offset;        // mirror of EEPROM[EE_ADDR_OFFSET]
+    uint8_t i2c_address;   // mirror of EEPROM[EEPROM_I2C_ADDRESS]
+    uint8_t speed;         // mirror of EEPROM[EEPROM_SPEED]
+    int8_t  offset;        // mirror of EEPROM[EEPROM_OFFSET]
 };
 
 // What the caller must persist / act on after handle_command().
