@@ -54,7 +54,7 @@ function loadAddr() {
 }
 function createModule() {
   if (handle) api.free(handle);
-  handle = api.new(loadAddr(), 20, 0);
+  handle = api.new(loadAddr(), 10, 0);   // speed 10 = the firmware's own default
   log(`module created @ 0x${api.addr(handle).toString(16)}`);
 }
 createModule();
