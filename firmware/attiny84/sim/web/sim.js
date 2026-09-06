@@ -18,7 +18,6 @@ async function loadSimModule() {
 }
 const SimModule = await loadSimModule();
 
-const CHARSET = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:-!?/°";
 const LS_KEY = 'openflaps.sim.eepromAddr';
 
 const M = await SimModule();
@@ -136,3 +135,57 @@ requestAnimationFrame(frame);
 
 // expose for Task 10
 window.__sim = { M, api, get handle() { return handle; }, log };
+
+// ---- I2C console (Task 10) ----
+const { api: sapi, log: slog } = window.__sim;
+const H = () => window.__sim.handle;
+const CH = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:-!?/°";
+
+const charSel = document.getElementById('i2c-char');
+charSel.innerHTML = [...CH].map(
+  (c) => `<option value="${c.charCodeAt(0)}">${c === ' ' ? '(space)' : c}</option>`
+).join('');
+
+const targetAddr = () => Number(document.getElementById('i2c-addr').value) || 0x11;
+function send(cmd, data) {
+  const ack = sapi.write(H(), targetAddr(), cmd.charCodeAt(0), data & 0xff);
+  slog(`I2C -> 0x${targetAddr().toString(16)}  '${cmd}' ${data}   ${ack ? 'ACK' : 'no ACK'}`);
+}
+
+for (const b of document.querySelectorAll('#i2c-panel button[data-cmd]')) {
+  b.onclick = () => send(b.dataset.cmd, Number(b.dataset.data));
+}
+document.getElementById('i2c-display').onclick = () => send('D', Number(charSel.value));
+document.getElementById('i2c-setspeed').onclick = () => send('S', Number(document.getElementById('i2c-speed').value));
+document.getElementById('i2c-setoffset').onclick = () => send('O', Number(document.getElementById('i2c-offset').value));
+document.getElementById('i2c-setaddr').onclick = () => send('C', Number(document.getElementById('i2c-newaddr').value));
+
+document.getElementById('i2c-read').onclick = () => {
+  const ptr = window.__sim.M._malloc(3);
+  const ack = sapi.readInto(H(), targetAddr(), ptr);
+  if (ack) {
+    const b = window.__sim.M.HEAPU8.subarray(ptr, ptr + 3);
+    document.getElementById('i2c-status').textContent =
+      `speed=${b[0]} offset=${(b[1] << 24) >> 24} missed=${(b[2] << 24) >> 24}`;
+  } else {
+    document.getElementById('i2c-status').textContent = 'no ACK';
+  }
+  window.__sim.M._free(ptr);
+};
+
+// ---- hold-to-pair button ----
+const btn = document.getElementById('btn');
+let pressStart = 0;
+const startPress = () => { pressStart = performance.now(); };
+const endPress = () => {
+  if (!pressStart) return;
+  const dur = Math.round(performance.now() - pressStart);
+  pressStart = 0;
+  sapi.press(H(), dur);
+  slog(`button pressed ${dur} ms`);
+};
+btn.addEventListener('mousedown', startPress);
+btn.addEventListener('mouseup', endPress);
+btn.addEventListener('mouseleave', endPress);
+btn.addEventListener('touchstart', (e) => { e.preventDefault(); startPress(); }, { passive: false });
+btn.addEventListener('touchend', (e) => { e.preventDefault(); endPress(); }, { passive: false });
