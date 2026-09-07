@@ -26,7 +26,7 @@ export function ControlPage() {
   return (
     <div class="control-page">
       <div class="page-header">
-        <span class="page-title">▸ OPENFLAP</span>
+        <span class="page-title">▸ OPENFLAPS</span>
         <span class="mode-pill">{state.mode}</span>
       </div>
 
