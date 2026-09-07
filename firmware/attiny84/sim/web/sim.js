@@ -25,10 +25,11 @@ const cwrap = (n, r, a) => M.cwrap(n, r, a);
 const api = {
   new:   cwrap('module_new', 'number', ['number', 'number', 'number']),
   free:  cwrap('module_free', null, ['number']),
-  write: cwrap('module_i2c_write', 'number', ['number', 'number', 'number', 'number']),
+  write: cwrap('module_i2c_write', 'number', ['number', 'number', 'number', 'number', 'number']),
   readInto: cwrap('module_i2c_read', 'number', ['number', 'number', 'number']),
   tick:  cwrap('module_tick', null, ['number', 'number']),
   press: cwrap('module_press_button', null, ['number', 'number']),
+  powerDown: cwrap('module_power_down', null, ['number']),
   addr:  cwrap('module_get_address', 'number', ['number']),
   speed: cwrap('module_get_speed', 'number', ['number']),
   offset:cwrap('module_get_offset', 'number', ['number']),
@@ -38,6 +39,8 @@ const api = {
   target:cwrap('module_get_target', 'number', ['number']),
   homing:cwrap('module_is_homing', 'number', ['number']),
   moving:cwrap('module_is_moving', 'number', ['number']),
+  busy:  cwrap('module_is_busy', 'number', ['number']),
+  energized: cwrap('module_is_energized', 'number', ['number']),
   missed:cwrap('module_get_missed', 'number', ['number']),
 };
 
@@ -107,6 +110,8 @@ function renderInspector() {
     ['position', api.pos(handle) + ' / ' + api.target(handle)],
     ['homing',   api.homing(handle) ? 'yes' : 'no'],
     ['moving',   api.moving(handle) ? 'yes' : 'no'],
+    ['busy',     api.busy(handle) ? 'yes' : 'no'],
+    ['energized',api.energized(handle) ? 'yes' : 'no'],
     ['missed',   api.missed(handle)],
   ];
   inspectorEl.innerHTML = rows
@@ -174,26 +179,32 @@ const targetAddr = () => {
   const n = Number(raw);
   return raw !== '' && Number.isFinite(n) ? n : 0x11;
 };
-function send(cmd, data) {
-  const ack = api.write(H(), targetAddr(), cmd.charCodeAt(0), data & 0xff);
-  log(`I2C -> 0x${targetAddr().toString(16)}  '${cmd}' ${data}   ${ack ? 'ACK' : 'no ACK'}`);
+// extra: the D command's optional 3rd protocol byte (keep_energized).
+// Ignored by every other command, matching handle_command()/the real .ino.
+function send(cmd, data, extra = 0) {
+  const ack = api.write(H(), targetAddr(), cmd.charCodeAt(0), data & 0xff, extra & 0xff);
+  log(`I2C -> 0x${targetAddr().toString(16)}  '${cmd}' ${data} ${extra}   ${ack ? 'ACK' : 'no ACK'}`);
 }
 
 for (const b of document.querySelectorAll('#i2c-panel button[data-cmd]')) {
   b.onclick = () => send(b.dataset.cmd, Number(b.dataset.data));
 }
-document.getElementById('i2c-display').onclick = () => send('D', Number(charSel.value));
+document.getElementById('i2c-display').onclick = () => {
+  const keepEnergized = document.getElementById('i2c-keep-energized').checked;
+  send('D', Number(charSel.value), keepEnergized ? 1 : 0);
+};
+document.getElementById('i2c-powerdown').onclick = () => send('P', 0);
 document.getElementById('i2c-setspeed').onclick = () => send('S', Number(document.getElementById('i2c-speed').value));
 document.getElementById('i2c-setoffset').onclick = () => send('O', Number(document.getElementById('i2c-offset').value));
 document.getElementById('i2c-setaddr').onclick = () => send('C', Number(document.getElementById('i2c-newaddr').value));
 
 document.getElementById('i2c-read').onclick = () => {
-  const ptr = M._malloc(3);
+  const ptr = M._malloc(5);
   const ack = api.readInto(H(), targetAddr(), ptr);
   if (ack) {
-    const b = M.HEAPU8.subarray(ptr, ptr + 3);
+    const b = M.HEAPU8.subarray(ptr, ptr + 5);
     document.getElementById('i2c-status').textContent =
-      `speed=${b[0]} offset=${(b[1] << 24) >> 24} missed=${(b[2] << 24) >> 24}`;
+      `speed=${b[0]} offset=${(b[1] << 24) >> 24} missed=${(b[2] << 24) >> 24} busy=${b[3]} energized=${b[4]}`;
   } else {
     document.getElementById('i2c-status').textContent = 'no ACK';
   }
