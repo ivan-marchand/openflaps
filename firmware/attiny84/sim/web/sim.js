@@ -52,10 +52,20 @@ function loadAddr() {
   const v = parseInt(localStorage.getItem(LS_KEY) ?? '', 10);
   return Number.isFinite(v) ? v : 0x11;
 }
+// The real Pico rescans the bus and talks to whatever address it finds, so the
+// I2C console follows the live module rather than making you re-type its address
+// after a pairing session or an address change.
+let lastAddr = 0;
+function syncTargetAddr(a) {
+  const el = document.getElementById('i2c-addr');
+  if (el) el.value = a;
+}
 function createModule() {
   if (handle) api.free(handle);
   handle = api.new(loadAddr(), 10, 0);   // speed 10 = the firmware's own default
-  log(`module created @ 0x${api.addr(handle).toString(16)}`);
+  lastAddr = api.addr(handle);
+  syncTargetAddr(lastAddr);
+  log(`module created @ 0x${lastAddr.toString(16)}`);
 }
 createModule();
 
@@ -104,14 +114,16 @@ function renderInspector() {
     .join('');
 }
 
-// ---- persist address when it changes ----
-let lastAddr = api.addr(handle);
+// ---- follow / persist the module address when it changes ----
 function maybePersistAddr() {
   const a = api.addr(handle);
   if (a !== lastAddr) {
     lastAddr = a;
     if (persistEnabled()) localStorage.setItem(LS_KEY, String(a));
-    log(`address is now 0x${a.toString(16)}`);
+    syncTargetAddr(a);
+    log(a === 0x10
+      ? 'address is now 0x10 — pairing mode. Set "new addr" and hit CHANGE (C) to assign one.'
+      : `address is now 0x${a.toString(16)}`);
   }
 }
 
