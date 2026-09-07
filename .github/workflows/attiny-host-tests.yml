@@ -1,0 +1,27 @@
+name: ATtiny84 host tests
+
+on:
+  pull_request:
+    paths:
+      - "firmware/attiny84/**"
+  push:
+    branches: [master]
+    paths:
+      - "firmware/attiny84/**"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install PlatformIO
+        run: python3 -m pip install --upgrade platformio
+
+      - name: Run native host test suite
+        working-directory: firmware/attiny84/test-host
+        run: python3 -m platformio test -e native
