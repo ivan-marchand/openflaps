@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OpenFlaps — ATtiny84 Module Simulator</title>
+  <link rel="stylesheet" href="./sim.css" />
+</head>
+<body>
+  <h1>OPENFLAPS · ATTINY84 MODULE SIMULATOR</h1>
+  <p style="color:#667;max-width:52ch;font-size:0.8rem">
+    One split-flap module running the real firmware logic
+    (<code>split_flap_controller.h</code> + <code>attiny_protocol.h</code>) compiled to WebAssembly.
+    Byte-level I2C/USI timing is not modelled.
+  </p>
+
+  <div class="sim-wrap">
+    <div class="panel flap-stage">
+      <h2>Module</h2>
+      <div id="flap"></div>
+      <button id="btn" class="btn module-btn" title="Click = next char · Hold 3s = pairing">PRESS</button>
+      <div id="btn-hint" style="color:#667;font-size:0.7rem">hold 3s for pairing</div>
+    </div>
+
+    <div class="panel">
+      <h2>Inspector</h2>
+      <dl class="inspector" id="inspector"></dl>
+    </div>
+
+    <div class="panel" id="i2c-panel">
+      <h2>I2C console (as the Pico)</h2>
+      <div class="row">
+        <label>target addr <input type="number" id="i2c-addr" value="17" min="16" max="127" /></label>
+        <span style="color:#667;font-size:0.75rem">(0x11 = 17)</span>
+      </div>
+      <div class="row">
+        <button class="btn" data-cmd="I" data-data="0">HOME (I)</button>
+        <button class="btn" data-cmd="A" data-data="0">SHOW ADDR (A)</button>
+      </div>
+      <div class="row">
+        <label>char <select id="i2c-char"></select></label>
+        <button class="btn" id="i2c-display">DISPLAY (D)</button>
+      </div>
+      <div class="row">
+        <label>speed <input type="number" id="i2c-speed" value="10" min="1" max="255" /></label>
+        <button class="btn" id="i2c-setspeed">SET (S)</button>
+      </div>
+      <div class="row">
+        <label>offset <input type="number" id="i2c-offset" value="0" min="-127" max="127" /></label>
+        <button class="btn" id="i2c-setoffset">SET (O)</button>
+      </div>
+      <div class="row">
+        <label>new addr <input type="number" id="i2c-newaddr" value="18" min="16" max="127" /></label>
+        <button class="btn" id="i2c-setaddr">CHANGE (C)</button>
+      </div>
+      <div class="row">
+        <button class="btn" id="i2c-read">READ STATUS (3 bytes)</button>
+        <span id="i2c-status" style="font-family:ui-monospace,monospace"></span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Simulation</h2>
+      <div class="row">
+        <button class="btn" id="runpause">Pause</button>
+        <label>rate <input type="number" id="rate" value="1" min="1" max="500" /></label>
+      </div>
+      <div class="row">
+        <button class="btn" id="reset">Reset module</button>
+        <label><input type="checkbox" id="persist" checked /> remember address</label>
+      </div>
+      <div class="console" id="console"></div>
+    </div>
+  </div>
+
+  <script type="module" src="./sim.js"></script>
+</body>
+</html>
