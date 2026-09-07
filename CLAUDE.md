@@ -7,6 +7,7 @@ OpenFlaps is a networked split-flap display system. A Raspberry Pi Pico W hosts 
 ## Git
 
 - Default branch: `master`
+- Never push directly to `master` — always open a PR, unless the user gives explicit permission to push directly.
 
 ## Repository Structure
 
