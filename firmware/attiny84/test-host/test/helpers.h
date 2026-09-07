@@ -1,6 +1,7 @@
 // firmware/attiny84/test-host/test/helpers.h
 #pragma once
 #include <ArduinoFake.h>
+#include "split_flap_controller.h"
 
 using namespace fakeit;
 
@@ -29,4 +30,16 @@ inline void arduino_fake_reset() {
 // Advance the fake microsecond clock. Provided for reuse by later tasks.
 inline void advance_us(uint32_t us) {
     sim_time_us += us;
+}
+
+// Run update() repeatedly, advancing time enough to fire one step each call,
+// until the controller is idle or we hit the call cap.
+inline void run_until_idle(SplitFlapController &c, int max_calls = 20000) {
+    int i = 0;
+    for (; i < max_calls && c.is_busy(); i++) {
+        sim_time_us += 4000;   // > any step delay used in these tests
+        c.update();
+    }
+    // Fail loudly on non-termination instead of silently passing a stuck machine.
+    if (c.is_busy()) TEST_FAIL_MESSAGE("run_until_idle: still busy after max_calls");
 }

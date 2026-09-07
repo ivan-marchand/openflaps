@@ -64,19 +64,21 @@ Module* module_new(uint8_t eeprom_addr, uint8_t speed, int8_t offset) {
 
 EMSCRIPTEN_KEEPALIVE void module_free(Module* m) { delete m; }
 
+// extra: the D command's optional 3rd protocol byte (nonzero = keep_energized).
+// Ignored by every other command, matching handle_command()/the real .ino.
 EMSCRIPTEN_KEEPALIVE
-int module_i2c_write(Module* m, uint8_t addr, int cmd, int data) {
+int module_i2c_write(Module* m, uint8_t addr, int cmd, int data, int extra) {
     if (addr != m->cfg.i2c_address) return 0;
     // The CommandEffect flags tell the .ino what to persist to EEPROM; here
     // persistence lives in the page's localStorage, keyed off module_get_address.
-    (void)handle_command(m->controller, m->cfg, (char)cmd, (char)data);
+    (void)handle_command(m->controller, m->cfg, (char)cmd, (char)data, (char)extra);
     return 1;
 }
 
 EMSCRIPTEN_KEEPALIVE
-int module_i2c_read(Module* m, uint8_t addr, uint8_t* out3) {
+int module_i2c_read(Module* m, uint8_t addr, uint8_t* out5) {
     if (addr != m->cfg.i2c_address) return 0;
-    module_status(m->controller, m->cfg, out3);
+    module_status(m->controller, m->cfg, out5);
     return 1;
 }
 
@@ -141,6 +143,11 @@ EMSCRIPTEN_KEEPALIVE uint32_t module_get_position(Module* m){ return m->controll
 EMSCRIPTEN_KEEPALIVE uint32_t module_get_target(Module* m)  { return m->controller.target_position(); }
 EMSCRIPTEN_KEEPALIVE int      module_is_homing(Module* m)   { return m->controller.is_homing() ? 1 : 0; }
 EMSCRIPTEN_KEEPALIVE int      module_is_moving(Module* m)   { return m->controller.is_moving() ? 1 : 0; }
+EMSCRIPTEN_KEEPALIVE int      module_is_busy(Module* m)     { return m->controller.is_busy() ? 1 : 0; }
+EMSCRIPTEN_KEEPALIVE int      module_is_energized(Module* m){ return m->controller.is_energized() ? 1 : 0; }
 EMSCRIPTEN_KEEPALIVE int      module_get_missed(Module* m)  { return m->controller.get_average_missed_steps(); }
+
+// De-energize the module now (no-op while busy), same as I2C command 'P'.
+EMSCRIPTEN_KEEPALIVE void     module_power_down(Module* m)   { m->controller.power_down(); }
 
 } // extern "C"

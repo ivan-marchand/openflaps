@@ -24,6 +24,13 @@ constexpr uint8_t STEPPERH_SEQ[4] = {
 
 static char char_set[] = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:-!?/\xb0";
 
+// A manual button step keeps coils energized (see SplitFlapController::next_char()),
+// but unlike the Pico's D-command keep_energized (always followed by another
+// refresh within TEMP_UPDATE_INTERVAL), nothing guarantees a follow-up command
+// here. De-energize automatically after this much idle time so a forgotten
+// button press doesn't hold current forever.
+#define BUTTON_IDLE_TIMEOUT_MS 10000UL
+
 class PowerManagedStepper {
 public:
   PowerManagedStepper(uint32_t number_of_steps, uint8_t motor_pin_1, uint8_t motor_pin_2, uint8_t motor_pin_3, uint8_t motor_pin_4)
@@ -75,6 +82,10 @@ public:
   }
   // Read-only: current index into STEPPERH_SEQ. Added for tests + the simulator.
   uint8_t seq_index() const { return _seq_index; }
+
+  bool is_active() const {
+    return _enabled;
+  }
 
   // Call often from loop()
   void update() {
@@ -138,6 +149,16 @@ private:
   bool _moving = false;
   uint32_t _target_position = 0;
   uint8_t _current_char_index = 0;
+  bool _keep_energized_after_move = false;
+
+  // Coils were off, so position may have drifted: re-home before this move.
+  bool _pending_move = false;
+  uint8_t _pending_char_index = 0;
+
+  // Set while energized because of a button step rather than a D command;
+  // governs the idle-timeout auto-deactivate (see update()).
+  bool _button_energized_hold = false;
+  unsigned long _button_idle_since_ms = 0;
 
   // homing state machine
   enum home_state_t : uint8_t { HOME_IDLE,
@@ -151,6 +172,37 @@ private:
     // We'll update _position when that step actually executes, in update().
     // To keep it simple, we update position when we *schedule* the step.
     _position = (_position + 1) % _number_of_steps;
+  }
+
+  // Begin the actual move to a character index. Assumes _position is accurate,
+  // i.e. the coils have been continuously energized since the last move.
+  void start_move_to(uint8_t char_index) {
+    _current_char_index = char_index;
+    uint8_t count = strlen(char_set);
+    uint32_t target = _offset + (int)(char_index * (float(_number_of_steps) / count));
+    target %= _number_of_steps;
+
+    _target_position = target;
+    _moving = true;
+    _stepper.activate();
+  }
+
+  // Request a move to a character index, re-homing first if the coils are
+  // currently off (position may have drifted while unpowered).
+  void request_char_index(uint8_t char_index) {
+    if (_homing) {
+      // Already re-homing for a previous request: just update the target.
+      _pending_move = true;
+      _pending_char_index = char_index;
+      return;
+    }
+    if (!_stepper.is_active()) {
+      _pending_move = true;
+      _pending_char_index = char_index;
+      initialize();
+      return;
+    }
+    start_move_to(char_index);
   }
 
 public:
@@ -187,38 +239,49 @@ public:
     _stepper.set_speed(speed);
   }
 
-  // Start moving to a character position (non-blocking)
-  void display_char(char c) {
+  // Start moving to a character position (non-blocking).
+  // keep_energized: if true, coils stay powered after the move completes
+  // (e.g. clock/temp modes that update every minute and shouldn't re-home
+  // each time); if false (default), coils de-energize once idle to save
+  // power, and the next move re-homes first since position may have drifted.
+  void display_char(char c, bool keep_energized = false) {
     char *pointer = strchr(char_set, c);
     if (pointer == NULL) return;
 
     uint32_t pos = (uint32_t)(pointer - char_set);
     if (pos < 0) return;
 
-    _current_char_index = pos;
-
-    uint8_t count = strlen(char_set);
-    uint32_t target = _offset + (int)(pos * (float(_number_of_steps) / count));
-    target %= _number_of_steps;
-    if (target < 0) target += _number_of_steps;
-
-    _target_position = target;
-    _moving = true;
-    _stepper.activate();
+    _keep_energized_after_move = keep_energized;
+    _button_energized_hold = false;  // an explicit command now governs the hold policy
+    request_char_index(pos);
   }
 
+  // Manual step via the physical button. Keeps coils energized afterward so
+  // repeated button presses don't each pay for a re-home; de-energizes on its
+  // own after BUTTON_IDLE_TIMEOUT_MS of inactivity (see update()), or
+  // immediately once a D command from the Pico governs the hold instead.
   void next_char() {
     uint8_t count = strlen(char_set);
-    _current_char_index = (_current_char_index + 1) % count;
-    uint32_t target = _offset + (int)(_current_char_index * (float(_number_of_steps) / count));
-    target %= _number_of_steps;
-    _target_position = target;
-    _moving = true;
-    _stepper.activate();
+    _keep_energized_after_move = true;
+    _button_energized_hold = true;
+    request_char_index((_current_char_index + 1) % count);
+  }
+
+  // De-energize the coils right now. No-op while a move or homing is in
+  // progress so we don't leave a move stuck mid-flip.
+  void power_down() {
+    if (!is_busy()) {
+      _stepper.deactivate();
+      _button_energized_hold = false;
+    }
   }
 
   bool is_busy() const {
     return _homing || _moving || (_stepper.pending() != 0);
+  }
+
+  bool is_energized() const {
+    return _stepper.is_active();
   }
   // Read-only accessors. Added for tests + the simulator; no behaviour change.
   char current_char() const { return char_set[_current_char_index]; }
@@ -259,6 +322,14 @@ public:
                 _nb_of_steps_engaged = 0;
                 _homing = false;
                 _home_state = HOME_IDLE;
+                if (_pending_move) {
+                  // Homing was done to re-establish position before a
+                  // requested move; continue straight into that move.
+                  _pending_move = false;
+                  start_move_to(_pending_char_index);
+                } else {
+                  _stepper.deactivate();  // de-energize coils when idle to save power
+                }
                 break;
               }
               _nb_of_steps_engaged++;
@@ -280,8 +351,11 @@ public:
       if (_moving && !_homing) {
         if (_position == _target_position) {
           _moving = false;
-          // Optional: power-save when done
-          // _stepper.deactivate();
+          if (!_keep_energized_after_move) {
+            _stepper.deactivate();  // de-energize coils when idle to save power
+          } else if (_button_energized_hold) {
+            _button_idle_since_ms = millis();  // start the idle clock now
+          }
         } else {
           step_once();
         }
@@ -304,6 +378,14 @@ public:
           _limit_switch_engaged = true;
         }
       }
+    }
+
+    // A button-triggered hold has no guaranteed follow-up command (unlike
+    // the Pico's periodic modes), so time it out once idle.
+    if (_button_energized_hold && !is_busy()
+        && (unsigned long)(millis() - _button_idle_since_ms) >= BUTTON_IDLE_TIMEOUT_MS) {
+      _stepper.deactivate();
+      _button_energized_hold = false;
     }
   }
 

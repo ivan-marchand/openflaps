@@ -16,9 +16,13 @@ visual, interactive front end for the same code.
 ## What it does / doesn't model
 
 - **Does:** the stepper timing formula, the homing state machine, character
-  positioning, `I/D/S/O/C/A` command handling, the 3-byte status response,
-  short-press = next char, long-press (>= 3 s) = pairing (address -> 0x10),
-  EEPROM persistence of the assigned address (via `localStorage`).
+  positioning, `I/D/P/S/O/C/A` command handling, the D command's optional
+  keep_energized byte, the 5-byte status response (`speed, offset, avg_missed,
+  busy, energized`), coil energize/de-energize (idle modules de-energize;
+  `keep_energized` and the button-hold both stay powered until the next
+  command or, for a button hold, a timeout), short-press = next char,
+  long-press (>= 3 s) = pairing (address -> 0x10), EEPROM persistence of the
+  assigned address (via `localStorage`).
 - **Does not:** USI / `Wire` byte-level I2C timing (the page calls
   `handle_command` directly — there is no bit/byte clock, no ACK/NACK framing,
   no bus arbitration), multiple modules, the Pico, WiFi, NTP, weather.
@@ -118,8 +122,11 @@ change `build.sh`'s modularize flags.
 Exercises the C ABI directly: homing completes and resets position to 0, `D`
 moves the rotor to a character **and settles there** (`'A'` -> step 75, `'Z'`
 -> step 1971, with `module_is_moving` back to 0 and `position == target`), a
-write to the wrong address is not ACKed, and a 3500 ms press enters pairing
-(address -> 0x10).
+de-energized module re-homes before the next `D` instead of trusting a stale
+position, `keep_energized` (the D command's 3rd byte) skips that re-home on
+the following command, `module_power_down` de-energizes an idle module but is
+a no-op while busy, a write to the wrong address is not ACKed, and a 3500 ms
+press enters pairing (address -> 0x10).
 
 ## Files
 
