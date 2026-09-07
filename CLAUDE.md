@@ -170,6 +170,23 @@ All three are gitignored.
   (`cd web && python3 -m http.server 8000`). ABI smoke test: `node test_smoke.mjs`.
   One module only; no USI/Wire byte-level timing.
 
+## CI
+
+`.github/workflows/`:
+
+- **`attiny-host-tests.yml`** — runs the PlatformIO native test suite
+  (`firmware/attiny84/test-host/`) on PRs and `master` pushes touching
+  `firmware/attiny84/**`.
+- **`attiny-sim-build.yml`** — builds the ATtiny84 module simulator to wasm
+  (via `mymindstorm/setup-emsdk`) and runs `test_smoke.mjs` against it, on PRs
+  and `master` pushes touching `firmware/attiny84/sim/**` or
+  `firmware/attiny84/split_flap_display_async/**`. Every run uploads the built
+  `web/` directory as a GitHub Actions artifact. On `master` pushes only, it
+  also force-publishes `web/` to the `gh-actions` branch (squashed, no
+  accumulated history) so jsDelivr can serve it directly — see the Features
+  list in `README.md`. That link only resolves once the repo is public;
+  jsDelivr's GitHub CDN doesn't fetch from private repos.
+
 ## Manual Testing (Pico / sketch)
 
 Pico (`firmware/pico/`) and the `.ino` sketch itself have no automated tests —

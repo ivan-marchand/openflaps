@@ -15,6 +15,7 @@ interface and communicates via I²C with ATtiny84 controllers, each driving a
 - **Modules page** — calibrate each character module (I²C address, speed, offset)
 - **Pairing mode** — add new modules without opening Arduino IDE
 - **Expandable** — designed to chain as many characters as you need
+- **[Live simulator](https://cdn.jsdelivr.net/gh/ivan-marchand/openflaps@gh-actions/firmware/attiny84/sim/web/index.html)** — try one module in your browser, no hardware needed (requires the repo to be public — jsDelivr's GitHub CDN doesn't serve private repos — and jsDelivr may cache a branch for up to ~7 days; [purge](https://www.jsdelivr.com/tools/purge) after a build if it's stale)
 
 ---
 
