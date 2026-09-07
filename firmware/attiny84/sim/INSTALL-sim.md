@@ -4,6 +4,11 @@ A browser simulation of **one** split-flap module running the real firmware
 logic (`../split_flap_display_async/split_flap_controller.h` and
 `../split_flap_display_async/attiny_protocol.h`) compiled to WebAssembly.
 
+CI builds this simulator and runs `test_smoke.mjs` against it on every PR
+touching this directory (`.github/workflows/attiny-sim-build.yml`); pushes to
+`master` also publish `web/` to the `gh-actions` branch for the jsDelivr link
+in the top-level README.
+
 The same two headers are exercised headless by the PlatformIO host suite in
 `../test-host/` (`python3 -m platformio test -e native`). This simulator adds a
 visual, interactive front end for the same code.

@@ -1,0 +1,48 @@
+name: ATtiny84 simulator build
+
+on:
+  pull_request:
+    paths:
+      - "firmware/attiny84/sim/**"
+      - "firmware/attiny84/split_flap_display_async/**"
+  push:
+    branches: [master]
+    paths:
+      - "firmware/attiny84/sim/**"
+      - "firmware/attiny84/split_flap_display_async/**"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: "3.1.61"
+
+      - name: Build wasm simulator
+        working-directory: firmware/attiny84/sim
+        run: ./build.sh
+
+      - name: Smoke-test the compiled ABI
+        working-directory: firmware/attiny84/sim
+        run: node test_smoke.mjs
+
+      - name: Upload simulator build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: attiny84-sim-web
+          path: firmware/attiny84/sim/web
+
+      - name: Publish to gh-actions branch
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-actions
+          publish_dir: firmware/attiny84/sim/web
+          destination_dir: firmware/attiny84/sim/web
+          force_orphan: true
