@@ -16,6 +16,9 @@ import tz
 CONFIG_FILE = "wifi_config.json"
 API_CONFIG_FILE = "api_config.json"
 TIMEZONE_CONFIG_FILE = "timezone_config.json"
+ENERGY_CONFIG_FILE = "energy_config.json"
+
+DEFAULT_MAX_CONCURRENT_MODULES = 4  # matches display width -> no limiting by default
 
 # I2C
 i2c = I2C(0, freq=100000, scl=Pin(1), sda=Pin(0))
@@ -82,6 +85,24 @@ def save_timezone(zone):
         return True
     except Exception as e:
         print("Failed to save timezone:", e)
+        return False
+
+def load_max_concurrent():
+    try:
+        with open(ENERGY_CONFIG_FILE, "r") as f:
+            return int(ujson.load(f).get("max_concurrent", DEFAULT_MAX_CONCURRENT_MODULES))
+    except:
+        return DEFAULT_MAX_CONCURRENT_MODULES
+
+def save_max_concurrent(value):
+    global max_concurrent_modules
+    try:
+        with open(ENERGY_CONFIG_FILE, "w") as f:
+            ujson.dump({"max_concurrent": value}, f)
+        max_concurrent_modules = value
+        return True
+    except Exception as e:
+        print("Failed to save energy config:", e)
         return False
 
 # ----------------------------
@@ -370,7 +391,7 @@ def display_web_temp(has_previous=False):
     if temp is None:
         if not has_previous:
             # First fetch in this session failed — show ERR so screen isn't blank
-            print_string("ERR ")
+            print_string("ERR ", keep_energized=True)
             return "ERR "
         # Already showed a temperature — keep it and retry next interval
         return None
@@ -378,34 +399,64 @@ def display_web_temp(has_previous=False):
     temp = 32 + temp * 9/5
     t = int(round(temp))
     txt = "{:2d}°F".format(t)[:4]
-    print_string(txt)
+    # Keep coils energized: this mode refreshes every TEMP_UPDATE_INTERVAL,
+    # so re-homing before each update would be slow, noisy, and wear the switch.
+    print_string(txt, keep_energized=True)
     return txt
 
 # ----------------------------
 # I2C helpers
 # ----------------------------
-def print_char(address: int, c: str):
+def print_char(address: int, c: str, keep_energized: bool = False):
     try:
         if c == "°":
             b = 0xb0
         else:
             b = ord(c[0].upper())
-        i2c.writeto(address, bytes([ord('D'), b]))
+        i2c.writeto(address, bytes([ord('D'), b, 1 if keep_energized else 0]))
     except:
         print(f"Unable to send char to {hex(address)}")
 
-def print_string(s: str):
+def is_module_busy(address):
+    try:
+        data = i2c.readfrom(address, 4)
+        return bool(data[3])
+    except Exception:
+        return False
+
+def print_string(s: str, keep_energized: bool = False):
     print(f"Displaying: {s}")
     addresses = i2c.scan()
+    module_addresses = []
     address = BASE_ADDR
     while address in addresses:
-        if s:
-            c = s[0]
-            s = s[1:]
-            print_char(address, c)
-        else:
-            print_char(address, " ")
+        module_addresses.append(address)
         address += 1
+
+    # Modules are wired right-to-left, i.e. BASE_ADDR is the rightmost
+    # character: left-align/pad s to the module count as before, then
+    # reverse it so increasing address still reads left-to-right physically.
+    count = len(module_addresses)
+    chars = ((s + " " * count)[:count])[::-1]
+    queue = list(zip(module_addresses, chars))
+    # Dispatch leftmost (highest address) first, like natural left-to-right writing.
+    queue.reverse()
+
+    # Only dispatch up to max_concurrent_modules moves at a time so that at
+    # most that many stepper motors draw current simultaneously, capping peak
+    # power draw. Modules that have finished moving (per their busy flag)
+    # free up a slot for the next queued character.
+    limit = max(1, max_concurrent_modules)
+    in_flight = []
+    while queue or in_flight:
+        while queue and len(in_flight) < limit:
+            addr, c = queue.pop(0)
+            print_char(addr, c, keep_energized)
+            time.sleep_ms(20)
+            in_flight.append(addr)
+        if in_flight:
+            time.sleep_ms(20)
+            in_flight = [a for a in in_flight if is_module_busy(a)]
 
 def home_all():
     for address in i2c.scan():
@@ -416,12 +467,14 @@ def home_all():
 
 def read_module_params(address):
     try:
-        data = i2c.readfrom(address, 3)
+        data = i2c.readfrom(address, 5)
         return {
             "address": address,
             "speed": data[0],
             "offset": data[1],
             "missed_steps": data[2],
+            "busy": bool(data[3]),
+            "energized": bool(data[4]),
         }
     except Exception as e:
         print("Failed to read module {}: {}".format(hex(address), e))
@@ -430,6 +483,8 @@ def read_module_params(address):
             "speed": None,
             "offset": None,
             "missed_steps": None,
+            "busy": None,
+            "energized": None,
         }
 
 def update_module_params(address, speed, offset, new_address):
@@ -603,6 +658,7 @@ _synced = sync_time()
 next_ntp_sync = time.time() + (NTP_SYNC_INTERVAL if _synced else NTP_RETRY_INTERVAL)
 current_timezone = load_timezone()
 api_key = load_api_key()
+max_concurrent_modules = load_max_concurrent()
 
 server = start_server()
 
@@ -653,7 +709,9 @@ def handle_request(conn):
                     t = time.localtime(time.time() + tz.get_offset(current_timezone))
                     minutes = t[4]
                     last_text = "{:02d}{:02d}".format(t[3], t[4])
-                    print_string(last_text)
+                    # Keep coils energized: this mode updates every minute, so
+                    # re-homing before each update would be slow, noisy, and wear the switch.
+                    print_string(last_text, keep_energized=True)
                 elif mode == MODE_TEMP:
                     last_temp_update = 0
                 http_send_json(conn, {"ok": True, "status": status_line})
@@ -732,6 +790,18 @@ def handle_request(conn):
                 except Exception as e:
                     http_send_json(conn, {"ok": False, "error": str(e)}, code="500 Internal Server Error")
 
+        elif route == "/api/modules/power_down" and method == "POST":
+            data = parse_json_body(req)
+            address = data.get("address")
+            if address is None:
+                http_send_json(conn, {"ok": False, "error": "Missing address."}, code="400 Bad Request")
+            else:
+                try:
+                    i2c.writeto(int(address), bytes([ord('P'), 0x00]))
+                    http_send_json(conn, {"ok": True})
+                except Exception as e:
+                    http_send_json(conn, {"ok": False, "error": str(e)}, code="500 Internal Server Error")
+
         elif route == "/api/modules" and method == "POST":
             data = parse_json_body(req)
             address = data.get("address")
@@ -759,6 +829,21 @@ def handle_request(conn):
         elif route == "/api/timezone" and method == "GET":
             zones = tz.zone_list()
             http_send_json(conn, {"zones": zones, "current": current_timezone})
+
+        elif route == "/api/energy" and method == "GET":
+            http_send_json(conn, {"max_concurrent": max_concurrent_modules})
+
+        elif route == "/api/setup/energy" and method == "POST":
+            data = parse_json_body(req)
+            try:
+                value = int(data.get("max_concurrent"))
+                if value < 1:
+                    raise ValueError()
+            except (TypeError, ValueError):
+                http_send_json(conn, {"ok": False, "error": "max_concurrent must be a positive integer."}, code="400 Bad Request")
+            else:
+                save_max_concurrent(value)
+                http_send_json(conn, {"ok": True})
 
         elif route.startswith("/assets/"):
             filename = route.lstrip("/")
@@ -798,7 +883,7 @@ def tick():
         if current_minutes != minutes:
             minutes = current_minutes
             last_text = "{:02d}{:02d}".format(hours, minutes)
-            print_string(last_text)
+            print_string(last_text, keep_energized=True)
 
     elif mode == MODE_TEMP:
         if now - last_temp_update >= TEMP_UPDATE_INTERVAL:

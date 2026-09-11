@@ -114,13 +114,61 @@ void test_module_status_byte_layout(void) {
     SplitFlapController c = make_controller();
     c.setup(10, 0);
     ModuleConfig cfg{ 0x11, 42, -7 };
-    uint8_t out[3];
+    uint8_t out[5];
 
     module_status(c, cfg, out);
 
     TEST_ASSERT_EQUAL_UINT8(42, out[0]);
     TEST_ASSERT_EQUAL_UINT8((uint8_t)(-7), out[1]);
     TEST_ASSERT_EQUAL_UINT8((uint8_t)(-1), out[2]);   // no homing samples yet
+    TEST_ASSERT_EQUAL_UINT8(0, out[3]);               // not busy
+    TEST_ASSERT_EQUAL_UINT8(1, out[4]);               // fresh setup() defaults energized
+}
+
+// 'D' with no 3rd byte -> keep_energized=false (default): de-energizes on settling.
+void test_cmd_D_default_deenergizes_after_settling(void) {
+    SplitFlapController c = make_controller();
+    c.setup(10, 0);
+    ModuleConfig cfg{ 0x11, 10, 0 };
+
+    handle_command(c, cfg, 'D', 'A');
+    run_until_idle(c);
+    TEST_ASSERT_FALSE(c.is_energized());
+}
+
+// 'D' with a nonzero 3rd byte keeps coils energized after settling.
+void test_cmd_D_keep_energized_byte_stays_active(void) {
+    SplitFlapController c = make_controller();
+    c.setup(10, 0);
+    ModuleConfig cfg{ 0x11, 10, 0 };
+
+    handle_command(c, cfg, 'D', 'A', (char)1);
+    run_until_idle(c);
+    TEST_ASSERT_TRUE(c.is_energized());
+}
+
+// 'P' de-energizes an idle module.
+void test_cmd_P_deenergizes_when_idle(void) {
+    SplitFlapController c = make_controller();
+    c.setup(10, 0);
+    ModuleConfig cfg{ 0x11, 10, 0 };
+    TEST_ASSERT_TRUE(c.is_energized());   // fresh setup() defaults energized
+
+    handle_command(c, cfg, 'P', (char)0);
+    TEST_ASSERT_FALSE(c.is_energized());
+}
+
+// 'P' is a no-op while a move is still in progress.
+void test_cmd_P_is_noop_while_busy(void) {
+    SplitFlapController c = make_controller();
+    c.setup(10, 0);
+    ModuleConfig cfg{ 0x11, 10, 0 };
+
+    handle_command(c, cfg, 'D', 'A');
+    TEST_ASSERT_TRUE(c.is_busy());
+
+    handle_command(c, cfg, 'P', (char)0);
+    TEST_ASSERT_TRUE(c.is_energized());   // unaffected: still busy
 }
 
 void test_classify_button_press_boundaries(void) {
@@ -142,6 +190,10 @@ int main(int, char **) {
     RUN_TEST(test_cmd_A_shows_address_char);
     RUN_TEST(test_cmd_A_shows_letter_for_high_address);
     RUN_TEST(test_module_status_byte_layout);
+    RUN_TEST(test_cmd_D_default_deenergizes_after_settling);
+    RUN_TEST(test_cmd_D_keep_energized_byte_stays_active);
+    RUN_TEST(test_cmd_P_deenergizes_when_idle);
+    RUN_TEST(test_cmd_P_is_noop_while_busy);
     RUN_TEST(test_classify_button_press_boundaries);
     return UNITY_END();
 }

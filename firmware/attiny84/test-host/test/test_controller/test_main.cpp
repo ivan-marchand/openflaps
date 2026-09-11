@@ -11,17 +11,7 @@ static SplitFlapController make_controller() {
     return SplitFlapController(STEPS_PER_REV, GEAR_RATIO, 0, 2, 1, 3, LIMIT_PIN);
 }
 
-// Run update() repeatedly, advancing time enough to fire one step each call,
-// until the controller is idle or we hit the call cap.
-static void run_until_idle(SplitFlapController &c, int max_calls = 20000) {
-    int i = 0;
-    for (; i < max_calls && c.is_busy(); i++) {
-        sim_time_us += 4000;   // > any step delay used here
-        c.update();
-    }
-    // Fail loudly on non-termination instead of silently passing a stuck machine.
-    if (c.is_busy()) TEST_FAIL_MESSAGE("run_until_idle: still busy after max_calls");
-}
+// run_until_idle() lives in helpers.h (shared with test_protocol).
 
 // Drive update() n times, firing one step per call, with the limit switch
 // held at `sim_limit_state`.
@@ -142,6 +132,107 @@ void test_homing_completes_from_engaged(void) {
     TEST_ASSERT_EQUAL_UINT32(0, c.position());
 }
 
+// display_char's default (keep_energized=false) de-energizes once the move settles.
+void test_display_char_default_deenergizes_after_settling(void) {
+    SplitFlapController c = make_controller();
+    c.setup(50, 0);
+    c.display_char('A');
+    run_until_idle(c);
+    TEST_ASSERT_FALSE(c.is_energized());
+}
+
+// display_char(..., true) leaves coils energized after the move settles.
+void test_display_char_keep_energized_stays_active(void) {
+    SplitFlapController c = make_controller();
+    c.setup(50, 0);
+    c.display_char('A', true);
+    run_until_idle(c);
+    TEST_ASSERT_TRUE(c.is_energized());
+}
+
+// A move requested while de-energized re-homes first (position may have
+// drifted while unpowered), then continues into the originally requested move.
+void test_display_char_rehomes_when_deenergized(void) {
+    SplitFlapController c = make_controller();
+    c.setup(50, 0);
+
+    // A freshly set-up stepper defaults to active (see
+    // test_display_char_moves_to_expected_position), so this first move goes
+    // straight to the target with no homing, then de-energizes on settling
+    // (default keep_energized=false).
+    sim_limit_state = LOW;
+    c.display_char('A');
+    run_until_idle(c);
+    TEST_ASSERT_FALSE(c.is_energized());
+
+    sim_limit_state = LOW;
+    c.display_char('B');   // coils are off -> re-home before moving
+    TEST_ASSERT_TRUE(c.is_homing());
+
+    home_steps(c, 5);
+    sim_limit_state = HIGH;
+    home_steps(c, 60);
+    sim_limit_state = LOW;
+    home_steps(c, 3);
+    TEST_ASSERT_FALSE(c.is_homing());
+
+    // Homing hands off straight into the pending move; let it settle.
+    run_until_idle(c);
+    TEST_ASSERT_EQUAL_CHAR('B', c.current_char());
+    TEST_ASSERT_EQUAL_UINT32(151, c.position());  // 'B' index 2: (int)(2*3413/45)=151
+}
+
+// power_down() de-energizes an idle module immediately.
+void test_power_down_deenergizes_when_idle(void) {
+    SplitFlapController c = make_controller();
+    c.setup(50, 0);
+    c.display_char('A', true);   // stays energized once settled
+    run_until_idle(c);
+    TEST_ASSERT_TRUE(c.is_energized());
+
+    c.power_down();
+    TEST_ASSERT_FALSE(c.is_energized());
+}
+
+// power_down() is a no-op while a move is still in progress.
+void test_power_down_is_noop_while_busy(void) {
+    SplitFlapController c = make_controller();
+    c.setup(50, 0);
+    c.display_char('A');
+    TEST_ASSERT_TRUE(c.is_busy());
+    TEST_ASSERT_TRUE(c.is_energized());
+
+    c.power_down();
+    TEST_ASSERT_TRUE(c.is_energized());   // unaffected: still busy
+}
+
+// A button step (next_char) keeps coils energized once it settles.
+void test_next_char_keeps_energized_after_settling(void) {
+    SplitFlapController c = make_controller();
+    c.setup(50, 0);
+    c.next_char();
+    run_until_idle(c);
+    TEST_ASSERT_TRUE(c.is_energized());
+}
+
+// ...but auto-de-energizes after BUTTON_IDLE_TIMEOUT_MS of inactivity, since
+// unlike a Pico D command there's no guaranteed follow-up here.
+void test_button_hold_times_out(void) {
+    SplitFlapController c = make_controller();
+    c.setup(50, 0);
+    c.next_char();
+    run_until_idle(c);
+    TEST_ASSERT_TRUE(c.is_energized());
+
+    sim_time_us += (BUTTON_IDLE_TIMEOUT_MS - 1) * 1000UL;
+    c.update();
+    TEST_ASSERT_TRUE(c.is_energized());   // not yet timed out
+
+    sim_time_us += 2000UL;                // cross the threshold
+    c.update();
+    TEST_ASSERT_FALSE(c.is_energized());
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_steps_per_rev_uses_gear_ratio);
@@ -153,5 +244,12 @@ int main(int, char **) {
     RUN_TEST(test_initialize_starts_homing);
     RUN_TEST(test_homing_completes_from_released);
     RUN_TEST(test_homing_completes_from_engaged);
+    RUN_TEST(test_display_char_default_deenergizes_after_settling);
+    RUN_TEST(test_display_char_keep_energized_stays_active);
+    RUN_TEST(test_display_char_rehomes_when_deenergized);
+    RUN_TEST(test_power_down_deenergizes_when_idle);
+    RUN_TEST(test_power_down_is_noop_while_busy);
+    RUN_TEST(test_next_char_keeps_energized_after_settling);
+    RUN_TEST(test_button_hold_times_out);
     return UNITY_END();
 }

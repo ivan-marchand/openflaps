@@ -16,6 +16,7 @@ export function SetupPage() {
   const [apiKey, setApiKey] = useState('')
   const [zones, setZones] = useState([])
   const [selectedZone, setSelectedZone] = useState('')
+  const [maxConcurrent, setMaxConcurrent] = useState('')
   const [status, setStatus] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -23,6 +24,9 @@ export function SetupPage() {
     api.getTimezone().then(data => {
       setZones(data.zones || [])
       setSelectedZone(data.current || '')
+    }).catch(() => {})
+    api.getEnergy().then(data => {
+      setMaxConcurrent(String(data.max_concurrent ?? ''))
     }).catch(() => {})
   }, [])
 
@@ -54,6 +58,17 @@ export function SetupPage() {
     try {
       const r = await api.saveTimezone(selectedZone)
       setStatus(r.ok ? 'Timezone saved.' : r.error || 'Error.')
+    } finally { setBusy(false) }
+  }
+
+  async function saveEnergy(e) {
+    e.preventDefault()
+    const value = parseInt(maxConcurrent, 10)
+    if (!value || value < 1) return
+    setBusy(true)
+    try {
+      const r = await api.saveEnergy(value)
+      setStatus(r.ok ? 'Energy setting saved.' : r.error || 'Error.')
     } finally { setBusy(false) }
   }
 
@@ -91,6 +106,24 @@ export function SetupPage() {
           <div style="margin-top:10px;">
             <button class="btn" type="submit" disabled={busy || !apiKey}>SAVE API KEY</button>
           </div>
+        </form>
+      </div>
+
+      <div class="display-card" style="margin-bottom:12px;">
+        <div class="field-label">Max Modules Moving at Once</div>
+        <form onSubmit={saveEnergy}>
+          <input
+            type="number"
+            min="1"
+            placeholder="4"
+            value={maxConcurrent}
+            onInput={e => setMaxConcurrent(e.target.value)}
+            style="margin-bottom:8px;"
+          />
+          <div style="margin-bottom:10px;font-size:0.85em;opacity:0.7;">
+            Lower values save power by moving fewer flap motors at the same time, at the cost of slower updates.
+          </div>
+          <button class="btn" type="submit" disabled={busy || !maxConcurrent}>SAVE</button>
         </form>
       </div>
 
