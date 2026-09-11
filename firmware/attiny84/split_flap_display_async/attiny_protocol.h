@@ -21,20 +21,27 @@ struct CommandEffect {
     uint8_t new_address = 0;
 };
 
-// Apply one 2-byte I2C command. Mirrors the if/else chain in loop():
+// Apply one I2C command (2 bytes, plus an optional 3rd byte only used by 'D').
+// Mirrors the if/else chain in loop():
 //   'I'            -> initialize/home
-//   'D' (data!=0)  -> display character
+//   'D' (data!=0)  -> display character. `extra` nonzero keeps coils energized
+//                     after the move (skips re-homing next time); 0 (default)
+//                     de-energizes once idle.
+//   'P'            -> de-energize coils now (no-op while busy)
 //   'S'            -> set speed  (persist + mirror)
 //   'O'            -> set offset (persist + mirror)
 //   'C' (data>0)   -> change I2C address (persist + caller re-inits Wire)
 //   'A'            -> display the char for this module's address
 inline CommandEffect handle_command(SplitFlapController& controller,
-                                    ModuleConfig& cfg, char command, char data) {
+                                    ModuleConfig& cfg, char command, char data,
+                                    char extra = 0) {
     CommandEffect fx;
     if (command == 'I') {
         controller.initialize();
     } else if (command == 'D' && data != 0) {
-        controller.display_char(data);
+        controller.display_char(data, extra != 0);
+    } else if (command == 'P') {
+        controller.power_down();
     } else if (command == 'S') {
         controller.update_speed((uint8_t)data);
         cfg.speed = (uint8_t)data;
@@ -58,12 +65,15 @@ inline CommandEffect handle_command(SplitFlapController& controller,
     return fx;
 }
 
-// The 3 status bytes returned on Wire.onRequest: [speed, offset, avg_missed].
+// The 5 status bytes returned on Wire.onRequest:
+// [speed, offset, avg_missed, busy, energized].
 inline void module_status(SplitFlapController& controller,
-                          const ModuleConfig& cfg, uint8_t out[3]) {
+                          const ModuleConfig& cfg, uint8_t out[5]) {
     out[0] = cfg.speed;
     out[1] = (uint8_t)cfg.offset;
     out[2] = (uint8_t)controller.get_average_missed_steps();
+    out[3] = controller.is_busy() ? 1 : 0;
+    out[4] = controller.is_energized() ? 1 : 0;
 }
 
 enum class ButtonAction : uint8_t { NONE, NEXT_CHAR, PAIRING };

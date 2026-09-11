@@ -71,16 +71,20 @@ SplitFlapController controller(steps_per_revolution, 50.0f / 30.0f,
                                MOTOR_PIN1, MOTOR_PIN2, MOTOR_PIN3, MOTOR_PIN4,
                                LIMIT_SWITCH_PIN);
 
-char message[2] = { 0 };
+// message[0] = command, message[1] = data, message[2] = optional flags
+// (only 'D' uses byte 2: nonzero = keep coils energized after the move)
+char message[3] = { 0 };
 volatile bool new_message = false;
 
-// Response buffer for 'P' requests: [speed, offset]
-char status_buffer[3] = { 10, 0, -1};
+// Response buffer for status requests: [speed, offset, avg_missed_steps, busy, energized]
+char status_buffer[5] = { 10, 0, -1, 0, 0 };
 
 void enter_pairing_mode() {
   DBG_PRINTLN("Entering Pairing mode!");
   EEPROM.write(EEPROM_I2C_ADDRESS, 0x10);
   Wire.begin(0x10);
+  Wire.onReceive(receive_event);
+  Wire.onRequest(request_event);
   controller.initialize();  // home as visual confirmation
 }
 
@@ -125,17 +129,20 @@ void handle_button() {
 
 // Runs inside the Wire.onRequest ISR (clock-stretched on the bus): keep it
 // minimal. status_buffer[0]/[1] are already kept current by setup()/loop();
-// only the missed-step average needs refreshing here. The equivalent
-// module_status() helper is used by the simulator and the host tests.
+// only the missed-step average and the busy/energized flags need refreshing
+// here. The equivalent module_status() helper is used by the simulator and
+// the host tests.
 void request_event() {
   status_buffer[2] = (char)controller.get_average_missed_steps();
-  Wire.write(status_buffer, 3);
+  status_buffer[3] = controller.is_busy() ? 1 : 0;
+  status_buffer[4] = controller.is_energized() ? 1 : 0;
+  Wire.write(status_buffer, 5);
 }
 
 void receive_event(int how_many) {
   uint32_t i = 0;
   memset(message, 0, sizeof(message));
-  while (Wire.available() && i < 2) {
+  while (Wire.available() && i < sizeof(message)) {
     message[i] = Wire.read();
     i++;
   }
@@ -146,13 +153,18 @@ void receive_event(int how_many) {
 void setup() {
   DBG_BEGIN(9600);
 
-  // Setup I2C connection
+  // Setup I2C connection — only if this module has already been paired
+  // (EEPROM_I2C_ADDRESS set). A fresh/unpaired module stays off the I2C bus
+  // and doesn't home until the user long-presses the button to explicitly
+  // enter pairing mode (enter_pairing_mode()). This avoids multiple freshly
+  // wired-up modules all defaulting to the same 0x10 address at once.
   uint8_t i2c_address = EEPROM.read(EEPROM_I2C_ADDRESS);
-  if (i2c_address == 0xFF) i2c_address = 0x10;
-
-  Wire.begin(i2c_address);
-  Wire.onReceive(receive_event);
-  Wire.onRequest(request_event);
+  bool is_paired = (i2c_address != 0xFF);
+  if (is_paired) {
+    Wire.begin(i2c_address);
+    Wire.onReceive(receive_event);
+    Wire.onRequest(request_event);
+  }
 
   // Load config
   uint8_t offset = EEPROM.read(EEPROM_OFFSET);
@@ -168,12 +180,14 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(BUTTON_PIN), btn_isr, CHANGE);
 
   controller.setup(speed, offset);
-  controller.initialize();
+  if (is_paired) {
+    controller.initialize();  // home only once we have a real identity
+  }
 
   // Display boot message is Serial debug port is available
   DBG_WAIT_FOR_SERIAL();
   DBG_PRINT("Starting display at address: ");
-  DBG_PRINTLN(i2c_address);
+  DBG_PRINTLN(is_paired ? i2c_address : 0);
   DBG_PRINT("Offset: ");
   DBG_PRINTLN(offset);
   DBG_PRINT("Speed: ");
@@ -204,7 +218,7 @@ void loop() {
     cfg.speed = status_buffer[0];
     cfg.offset = (int8_t)status_buffer[1];
 
-    CommandEffect fx = handle_command(controller, cfg, command, data);
+    CommandEffect fx = handle_command(controller, cfg, command, data, message[2]);
 
     if (fx.write_speed) {
       EEPROM.write(EEPROM_SPEED, cfg.speed);

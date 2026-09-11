@@ -14,7 +14,7 @@ em++ -O2 -std=gnu++17 \
   -sSINGLE_FILE=1 -sMODULARIZE=1 -sEXPORT_NAME=SimModule \
   -sENVIRONMENT=web,node \
   -sEXPORTED_RUNTIME_METHODS=cwrap,ccall,HEAPU8 \
-  -sEXPORTED_FUNCTIONS=_module_new,_module_free,_module_i2c_write,_module_i2c_read,_module_tick,_module_press_button,_module_get_address,_module_get_speed,_module_get_offset,_module_get_current_char,_module_get_visible_char,_module_get_position,_module_get_target,_module_is_homing,_module_is_moving,_module_get_missed,_malloc,_free \
+  -sEXPORTED_FUNCTIONS=_module_new,_module_free,_module_i2c_write,_module_i2c_read,_module_tick,_module_press_button,_module_power_down,_module_get_address,_module_get_speed,_module_get_offset,_module_get_current_char,_module_get_visible_char,_module_get_position,_module_get_target,_module_is_homing,_module_is_moving,_module_is_busy,_module_is_energized,_module_get_missed,_malloc,_free \
   -sALLOW_MEMORY_GROWTH=1 \
   -o web/sim.wasm.js
 
