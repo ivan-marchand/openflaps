@@ -1,5 +1,6 @@
 #include <EEPROM.h>
 #include <Wire.h>
+#include <avr/wdt.h>
 
 #if defined(__AVR_ATtiny84__)
 #define DBG_BEGIN(baud) \
@@ -52,6 +53,19 @@
 #define EEPROM_SPEED 1
 #define EEPROM_OFFSET 2
 
+// Disable the watchdog immediately at boot, before setup()/global constructors
+// run. reboot_with_new_address() below leaves the watchdog armed with a short
+// timeout to force a reset; without this .init3 hook a reset that lands back
+// in a slow-to-reach-setup() build could re-trigger the still-enabled
+// watchdog before wdt_disable() executes, causing a boot loop. MCUSR is
+// cleared too since a leftover WDRF bit reads as if every subsequent reset
+// were also watchdog-caused.
+void wdt_init(void) __attribute__((naked)) __attribute__((section(".init3")));
+void wdt_init(void) {
+  MCUSR = 0;
+  wdt_disable();
+}
+
 const uint32_t steps_per_revolution = 2048;  // for 28BYJ-48 "common" value
 
 
@@ -79,13 +93,26 @@ volatile bool new_message = false;
 // Response buffer for status requests: [speed, offset, avg_missed_steps, busy, energized]
 char status_buffer[5] = { 10, 0, -1, 0, 0 };
 
+// Persist a new I2C address, then reboot so the chip re-joins the bus through
+// setup()'s cold-boot Wire.begin() path instead of re-initializing Wire live.
+// The USI-based Wire implementation doesn't fully reset its internal state on
+// a runtime Wire.begin() call while already addressed elsewhere -- the
+// onReceive/onRequest callbacks even had to be re-registered by hand after
+// switching address (see git history), and status reads made shortly after a
+// live re-init have been seen to return bytes shifted/misaligned from
+// status_buffer. A short watchdog-forced reset (wdt_init() above guards
+// against a boot loop) re-runs the exact same well-tested init sequence used
+// on every normal power-up, at the cost of the module going offline for the
+// ~15ms it takes to reboot.
+void reboot_with_new_address(uint8_t addr) {
+  EEPROM.write(EEPROM_I2C_ADDRESS, addr);
+  wdt_enable(WDTO_15MS);
+  while (true) {}
+}
+
 void enter_pairing_mode() {
   DBG_PRINTLN("Entering Pairing mode!");
-  EEPROM.write(EEPROM_I2C_ADDRESS, 0x10);
-  Wire.begin(0x10);
-  Wire.onReceive(receive_event);
-  Wire.onRequest(request_event);
-  controller.initialize();  // home as visual confirmation
+  reboot_with_new_address(0x10);
 }
 
 // Fires on CHANGE: records press time on falling edge, sets short-press flag on rising edge.
@@ -229,10 +256,7 @@ void loop() {
       status_buffer[1] = (uint8_t)cfg.offset;
     }
     if (fx.change_address) {
-      EEPROM.write(EEPROM_I2C_ADDRESS, fx.new_address);
-      Wire.begin(fx.new_address);
-      Wire.onReceive(receive_event);
-      Wire.onRequest(request_event);
+      reboot_with_new_address(fx.new_address);  // does not return
     }
 
     new_message = false;

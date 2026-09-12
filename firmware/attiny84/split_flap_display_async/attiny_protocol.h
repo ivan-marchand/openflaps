@@ -30,7 +30,8 @@ struct CommandEffect {
 //   'P'            -> de-energize coils now (no-op while busy)
 //   'S'            -> set speed  (persist + mirror)
 //   'O'            -> set offset (persist + mirror)
-//   'C' (data>0)   -> change I2C address (persist + caller re-inits Wire)
+//   'C' (data>0)   -> change I2C address (persist + caller reboots to rejoin
+//                     the bus at the new address)
 //   'A'            -> display the char for this module's address
 inline CommandEffect handle_command(SplitFlapController& controller,
                                     ModuleConfig& cfg, char command, char data,

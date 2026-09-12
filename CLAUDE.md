@@ -125,10 +125,12 @@ Display is 4 characters wide. `print_string(s)` left-aligns/pads `s` to the modu
 | `P` | `\x00` | — | De-energize coils now. No-op if the module is currently homing or moving. |
 | `S` | `<speed>` | — | Set speed (saved to EEPROM) |
 | `O` | `<offset>` | — | Set offset (saved to EEPROM) |
-| `C` | `<addr>` | — | Change I2C address (saved to EEPROM) |
+| `C` | `<addr>` | — | Change I2C address (saved to EEPROM), then the module reboots (~15ms) to rejoin the bus at the new address |
 | `A` | `\x00` | — | Display address character |
 
 **Critical:** Wait 20 ms between writes — ATtiny has a single-slot message buffer and `EEPROM.write` blocks ~3.3 ms.
+
+**Why `C` reboots instead of re-initializing Wire live:** the ATtiny84's USI-based `Wire` implementation doesn't fully reset its internal state on a runtime `Wire.begin()` call made while already addressed elsewhere — the `onReceive`/`onRequest` callbacks even had to be re-registered by hand after a live address change in the past, and a status read made shortly after such a live re-init has been observed to come back with bytes shifted (e.g. the reported speed showing what was actually the offset). `reboot_with_new_address()` in the `.ino` persists the new address to EEPROM and forces a short watchdog reset instead, so the module rejoins the bus through the exact same `Wire.begin()` call path `setup()` already uses on every normal power-up.
 
 Character set (45 chars): ` ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:-!?/°`
 
@@ -136,7 +138,7 @@ Character set (45 chars): ` ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:-!?/°`
 
 Each ATtiny84 module has a physical button (`BUTTON_PIN`), independent of I2C/the Pico:
 - **Short press** — advances that module one character forward through `char_set` (`next_char()`), wrapping at the end. Coils stay energized after the step (like `keep_energized`) so repeated presses don't each pay for a re-home; unlike a Pico-driven hold there's no guaranteed follow-up command, so it auto-de-energizes after `BUTTON_IDLE_TIMEOUT_MS` (10s) of inactivity, or immediately once a `D` command from the Pico governs the hold instead. Useful for manually calibrating/testing a single module.
-- **Long press (3s)** — enters pairing mode: sets the module's I2C address to `0x10` and re-homes as visual confirmation.
+- **Long press (3s)** — enters pairing mode: sets the module's I2C address to `0x10`, reboots to rejoin the bus at that address (see `reboot_with_new_address()` above), then re-homes as visual confirmation.
 
 A fresh module (`EEPROM_I2C_ADDRESS` unset, i.e. `0xFF`) does **not** join the I2C bus or home at boot — it stays idle until the user long-presses the button to explicitly enter pairing mode. This keeps multiple newly wired-up modules from all defaulting to the same `0x10` address (and colliding on the bus) before they've been individually assigned a real address.
 
