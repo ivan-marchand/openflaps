@@ -24,12 +24,24 @@ DEFAULT_MAX_CONCURRENT_MODULES = 4  # matches display width -> no limiting by de
 i2c = I2C(0, freq=100000, scl=Pin(1), sda=Pin(0))
 BASE_ADDR = 0x11   # first character module address
 
+# Onboard status LED. On the Pico W this is actually wired through the
+# CYW43 wifi chip rather than a plain GPIO, but MicroPython's Pin("LED", ...)
+# abstracts that away so it can be driven like any other output pin.
+led = Pin("LED", Pin.OUT)
+LED_I2C_RECHECK_INTERVAL = 5   # seconds between background I2C liveness scans
+LED_BLINK_SLOW_MS = 500        # WiFi connected, no I2C modules found
+LED_BLINK_FAST_MS = 150        # I2C modules found, WiFi not connected
+
 LAT = 0.0
 LON = 0.0
 
 NTP_RETRY_INTERVAL = 300    # seconds between NTP retries on failure
 NTP_SYNC_INTERVAL = 3600    # seconds between successful NTP syncs
 TEMP_UPDATE_INTERVAL = 60   # seconds between outdoor temperature refreshes
+WIFI_CONNECT_TIMEOUT_S = 30 # seconds to wait for saved WiFi creds to connect
+                            # before assuming they're stale (network changed,
+                            # password rotated, device moved) and falling
+                            # back to AP provisioning
 
 # ----------------------------
 # WiFi credential storage (flash filesystem = persistent like EEPROM)
@@ -270,6 +282,16 @@ def start_ap_provisioning():
     print("  IP:       {}".format(ap.ifconfig()[0]))
     print("  Open:     http://192.168.4.1/")
 
+    # If flap modules are already wired up, show a status code on the
+    # display itself — there's no WiFi/web UI reachable at this point to
+    # check status any other way. print_string() no-ops harmlessly if no
+    # modules answer on I2C. Left de-energized (default) since this may
+    # sit for a while until someone notices and reconfigures.
+    try:
+        print_string("AP")
+    except Exception as e:
+        print("Could not display AP status:", e)
+
     try:
         addr = socket.getaddrinfo("192.168.4.1", 80)[0][-1]
         srv = socket.socket()
@@ -436,8 +458,12 @@ def print_string(s: str, keep_energized: bool = False):
     # Modules are wired right-to-left, i.e. BASE_ADDR is the rightmost
     # character: left-align/pad s to the module count as before, then
     # reverse it so increasing address still reads left-to-right physically.
+    # Built via reversed()+join rather than a [::-1] slice: MicroPython's
+    # string implementation doesn't support step!=1 slicing on strings that
+    # contain non-ASCII characters (e.g. the multi-byte "°" from temp mode).
     count = len(module_addresses)
-    chars = ((s + " " * count)[:count])[::-1]
+    padded = (s + " " * count)[:count]
+    chars = "".join(reversed(padded))
     queue = list(zip(module_addresses, chars))
     # Dispatch leftmost (highest address) first, like natural left-to-right writing.
     queue.reverse()
@@ -604,10 +630,20 @@ def connect_wifi():
     wlan.active(True)
     wlan.connect(ssid, password)
 
-    for _ in range(100):  # 10 second timeout
+    for _ in range(WIFI_CONNECT_TIMEOUT_S * 10):
         if wlan.isconnected():
             break
         sleep(0.1)
+
+    if not wlan.isconnected():
+        # Saved credentials no longer work (network changed, password
+        # rotated, device moved to a new location, etc). There's no way to
+        # reach the normal web UI to fix this remotely, so fall back to the
+        # same AP provisioning flow used on a never-configured device.
+        print("Could not connect to '{}' after {}s. Starting provisioning mode...".format(ssid, WIFI_CONNECT_TIMEOUT_S))
+        wlan.active(False)
+        start_ap_provisioning()  # blocks until saved + resets
+        return None, None
 
     ip = wlan.ifconfig()[0]
     print("WiFi connected:", ip)
@@ -645,13 +681,33 @@ status_line = "Ready."
 minutes = None
 last_temp_update = 0
 
+# Onboard LED status tracking (see update_led()): i2c_ok is re-checked
+# periodically in the background since modules can be plugged in/out or
+# drop off after boot; wifi_ok is cheap enough (wlan.isconnected()) to
+# just check every call.
+i2c_ok = False
+last_i2c_check = 0
+led_on = False
+last_led_toggle_ms = 0
+
 # ----------------------------
 # Boot
 # ----------------------------
+# Wait for at least one I2C module to come up, but don't hang forever if
+# the bus is empty (e.g. nothing wired up yet) — give up after 10s and
+# continue booting with no modules rather than freezing here.
+I2C_SCAN_TIMEOUT_MS = 10000
 s = i2c.scan()
-while s == []:
+deadline = time.ticks_add(time.ticks_ms(), I2C_SCAN_TIMEOUT_MS)
+while s == [] and time.ticks_diff(deadline, time.ticks_ms()) > 0:
+    time.sleep_ms(100)
     s = i2c.scan()
-print("I2C devices:", [hex(a) for a in s])
+if s == []:
+    print("No I2C devices found after {}s, continuing without modules".format(I2C_SCAN_TIMEOUT_MS // 1000))
+else:
+    print("I2C devices:", [hex(a) for a in s])
+i2c_ok = bool(s)
+last_i2c_check = time.time()
 
 wlan, ip = connect_wifi()
 _synced = sync_time()
@@ -871,6 +927,37 @@ def handle_request(conn):
 # ----------------------------
 # Background tasks
 # ----------------------------
+def update_led():
+    """Drive the onboard LED to reflect WiFi/I2C status:
+       - solid on:   WiFi connected AND at least one I2C module present
+       - slow blink: WiFi connected, no I2C modules
+       - fast blink: I2C modules present, WiFi not connected
+       - off:        neither
+    """
+    global i2c_ok, last_i2c_check, led_on, last_led_toggle_ms
+
+    now = time.time()
+    if now - last_i2c_check >= LED_I2C_RECHECK_INTERVAL:
+        last_i2c_check = now
+        i2c_ok = bool(i2c.scan())
+
+    wifi_ok = bool(wlan and wlan.isconnected())
+
+    if wifi_ok and i2c_ok:
+        led.value(1)
+        return
+    if not wifi_ok and not i2c_ok:
+        led.value(0)
+        return
+
+    blink_ms = LED_BLINK_SLOW_MS if wifi_ok else LED_BLINK_FAST_MS
+    now_ms = time.ticks_ms()
+    if time.ticks_diff(now_ms, last_led_toggle_ms) >= blink_ms:
+        last_led_toggle_ms = now_ms
+        led_on = not led_on
+        led.value(led_on)
+
+
 def tick():
     global minutes, last_text, last_temp_update, next_ntp_sync
     now = time.time()
@@ -909,6 +996,7 @@ while True:
         if conn:
             handle_request(conn)
         tick()
+        update_led()
     except Exception as e:
         print("Loop error:", e)
 
