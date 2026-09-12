@@ -253,6 +253,62 @@ EEPROM retained** selected in the board settings.
 
 ---
 
+The issues above happen while flashing. The ones below show up later, once a
+module is wired in and running.
+
+### A module's saved speed, offset, or address changes or reverts on its own
+
+This was a real firmware bug (fixed — see the project's git history for
+`attiny_protocol.h` and `reboot_with_new_address()`): setting speed or offset
+could leave the module's stored I2C address wrong after a later power cycle,
+and changing address could make the module briefly report a garbled speed
+value. Both were consequences of running with **BOD disabled** (see Fuse
+Reference below) — an EEPROM write timed to coincide with the stepper coil's
+current draw can corrupt EEPROM content beyond the byte being written, and a
+live `Wire.begin()` re-init while already addressed on the bus doesn't fully
+reset the USI peripheral's internal state. `S`/`O`/`C` now defer to when the
+motor is idle and de-energized, and address changes reboot the module to
+rejoin the bus cleanly, instead of patching the running Wire session.
+
+If you still see this on current firmware, it's almost certainly a power
+delivery problem rather than a code problem — see the next entry.
+
+### Motor is erratic or weak, `missed_steps` climbs, or a module drops off
+the bus under load
+
+Nearly always a symptom of the supply voltage sagging when the stepper's
+coils switch or hold current, made worse by BOD being disabled (nothing
+forces a clean reset if the chip briefly runs out of spec). Checklist:
+
+- Measure VCC at the **module's own pins** while it's stepping, not just at
+  rest or at the power supply — a connector or crimp that measures fine with
+  a multimeter at idle can still sag badly under switching current. This is
+  especially worth checking on any cable you've recently made or re-crimped.
+- Check wire gauge and connector quality on long daisy-chain runs — voltage
+  drop compounds with distance and with however many modules are stepping at
+  once.
+- Lower `max_concurrent_modules` (`POST /api/setup/energy`, ModulesPage
+  "Max Modules Moving at Once") to cap how many modules can draw peak current
+  simultaneously.
+- A steadily climbing `missed_steps` count (shown per module on the Modules
+  page) without any of the above usually points to speed set too high for
+  the available torque/voltage, or mechanical binding — try a lower `S`
+  speed value or check the flap mechanism moves freely by hand.
+
+### A module doesn't show up when scanning the I2C bus / is missing from the Modules page
+
+- A fresh, never-paired module (`EEPROM_I2C_ADDRESS` still `0xFF`) doesn't
+  join the bus at all until you long-press its button for 3s to enter
+  pairing mode — see "Physical Button" in the project's `CLAUDE.md`.
+- Two modules left in pairing mode (address `0x10`) at the same time will
+  collide on the bus — pair and assign a permanent address to one before
+  pairing the next.
+- Check SDA/SCL wiring for continuity and that GND is common across all
+  modules and the Pico; a floating or disconnected GND on one module can
+  make it (or its neighbors) intermittently vanish from `i2c.scan()`.
+
+---
+
 ## Fuse Reference
 
 | Fuse | Value | Meaning |
