@@ -36,13 +36,25 @@ struct CommandEffect {
 //
 // S/O/C are no-ops while the motor is homing or moving, same as 'P': these
 // modules are fused with brown-out detection (BOD) disabled (see
-// INSTALL-attiny84.md), so an EEPROM write timed to the stepper's coil-
-// switching current can corrupt EEPROM content beyond just the byte being
-// written -- observed on hardware as e.g. setting speed leaving the module's
-// stored I2C address wrong after a later power cycle. The caller (main .ino)
-// only persists/mirrors the cfg value when the corresponding fx flag is
-// true, so a command dropped for being busy simply isn't reported as
-// applied and the next retry (once idle) persists it.
+// INSTALL-attiny84.md), so an EEPROM write timed to the stepper's coil
+// current can corrupt EEPROM content beyond just the byte being written --
+// observed on hardware as e.g. setting speed leaving the module's stored
+// I2C address wrong after a later power cycle. When idle, they also
+// de-energize the coils first (via power_down(), which is a synchronous,
+// immediate pin write) if they were still holding current from a prior
+// keep_energized move: even steady holding current is enough of a draw to
+// risk the same corruption, and unlike a move in progress there's no reason
+// to wait -- the next display update just re-homes once, same as any other
+// idle-then-de-energized module. The caller (main .ino) only persists/
+// mirrors the cfg value when the corresponding fx flag is true, so a
+// command dropped for being busy simply isn't reported as applied and the
+// next retry (once idle) persists it.
+inline bool prepare_for_persist(SplitFlapController& controller) {
+    if (controller.is_busy()) return false;
+    controller.power_down();
+    return true;
+}
+
 inline CommandEffect handle_command(SplitFlapController& controller,
                                     ModuleConfig& cfg, char command, char data,
                                     char extra = 0) {
@@ -54,19 +66,19 @@ inline CommandEffect handle_command(SplitFlapController& controller,
     } else if (command == 'P') {
         controller.power_down();
     } else if (command == 'S') {
-        if (!controller.is_busy()) {
+        if (prepare_for_persist(controller)) {
             controller.update_speed((uint8_t)data);
             cfg.speed = (uint8_t)data;
             fx.write_speed = true;
         }
     } else if (command == 'O') {
-        if (!controller.is_busy()) {
+        if (prepare_for_persist(controller)) {
             controller.update_offset((uint8_t)data);
             cfg.offset = (int8_t)(uint8_t)data;
             fx.write_offset = true;
         }
     } else if (command == 'C' && data > 0) {
-        if (!controller.is_busy()) {
+        if (prepare_for_persist(controller)) {
             cfg.i2c_address = (uint8_t)data;
             fx.change_address = true;
             fx.new_address = (uint8_t)data;

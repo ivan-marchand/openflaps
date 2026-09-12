@@ -213,6 +213,26 @@ void test_cmd_C_is_noop_while_busy(void) {
     TEST_ASSERT_EQUAL_UINT8(0x11, cfg.i2c_address);   // unchanged
 }
 
+// 'S' still applies while idle-but-energized (e.g. holding position after a
+// keep_energized move), but de-energizes the coils first: holding current is
+// enough of a draw to risk the same EEPROM corruption as an active move, and
+// unlike a move in progress there's no reason to wait for it to end.
+void test_cmd_S_deenergizes_before_persisting_when_idle(void) {
+    SplitFlapController c = make_controller();
+    c.setup(10, 0);
+    ModuleConfig cfg{ 0x11, 10, 0 };
+
+    handle_command(c, cfg, 'D', 'A', (char)1);   // keep_energized move
+    run_until_idle(c);
+    TEST_ASSERT_FALSE(c.is_busy());
+    TEST_ASSERT_TRUE(c.is_energized());
+
+    CommandEffect fx = handle_command(c, cfg, 'S', (char)25);
+    TEST_ASSERT_TRUE(fx.write_speed);
+    TEST_ASSERT_EQUAL_UINT8(25, cfg.speed);
+    TEST_ASSERT_FALSE(c.is_energized());
+}
+
 void test_classify_button_press_boundaries(void) {
     TEST_ASSERT_EQUAL_INT((int)ButtonAction::NONE,      (int)classify_button_press(49));
     TEST_ASSERT_EQUAL_INT((int)ButtonAction::NEXT_CHAR, (int)classify_button_press(50));
@@ -239,6 +259,7 @@ int main(int, char **) {
     RUN_TEST(test_cmd_S_is_noop_while_busy);
     RUN_TEST(test_cmd_O_is_noop_while_busy);
     RUN_TEST(test_cmd_C_is_noop_while_busy);
+    RUN_TEST(test_cmd_S_deenergizes_before_persisting_when_idle);
     RUN_TEST(test_classify_button_press_boundaries);
     return UNITY_END();
 }
