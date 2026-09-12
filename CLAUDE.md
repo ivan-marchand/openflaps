@@ -123,12 +123,14 @@ Display is 4 characters wide. `print_string(s)` left-aligns/pads `s` to the modu
 | `I` | `\x00` | — | Initialize / home |
 | `D` | `<char>` | `<keep_energized>` (optional, default 0) | Display character. If the coils are currently off, the module re-homes first since position may have drifted, then moves. `keep_energized` nonzero leaves coils powered after the move (skips re-homing next time); 0 (default) de-energizes once idle. |
 | `P` | `\x00` | — | De-energize coils now. No-op if the module is currently homing or moving. |
-| `S` | `<speed>` | — | Set speed (saved to EEPROM) |
-| `O` | `<offset>` | — | Set offset (saved to EEPROM) |
-| `C` | `<addr>` | — | Change I2C address (saved to EEPROM), then the module reboots (~15ms) to rejoin the bus at the new address |
+| `S` | `<speed>` | — | Set speed (saved to EEPROM). No-op if the module is currently homing or moving. |
+| `O` | `<offset>` | — | Set offset (saved to EEPROM). No-op if the module is currently homing or moving. |
+| `C` | `<addr>` | — | Change I2C address (saved to EEPROM), then the module reboots (~15ms) to rejoin the bus at the new address. No-op if the module is currently homing or moving. |
 | `A` | `\x00` | — | Display address character |
 
 **Critical:** Wait 20 ms between writes — ATtiny has a single-slot message buffer and `EEPROM.write` blocks ~3.3 ms.
+
+**Why `S`/`O`/`C` no-op while busy:** these modules are fused with brown-out detection (BOD) disabled (see `firmware/attiny84/INSTALL-attiny84.md`), so an EEPROM write timed to coincide with the stepper's coil-switching current has been observed to corrupt EEPROM content beyond the byte being written — e.g. setting speed leaving the module's saved I2C address wrong after a later power cycle, or changing address corrupting the saved speed. Gating `S`/`O`/`C` on `!is_busy()` (mirroring `P`) keeps EEPROM writes to moments when the coils aren't actively switching. A command dropped this way simply isn't mirrored into the module's reported status, so the Pico's change-detection in `update_module_params()` (`firmware/pico/main.py`) sees the value as still unset and retries on the next call.
 
 **Why `C` reboots instead of re-initializing Wire live:** the ATtiny84's USI-based `Wire` implementation doesn't fully reset its internal state on a runtime `Wire.begin()` call made while already addressed elsewhere — the `onReceive`/`onRequest` callbacks even had to be re-registered by hand after a live address change in the past, and a status read made shortly after such a live re-init has been observed to come back with bytes shifted (e.g. the reported speed showing what was actually the offset). `reboot_with_new_address()` in the `.ino` persists the new address to EEPROM and forces a short watchdog reset instead, so the module rejoins the bus through the exact same `Wire.begin()` call path `setup()` already uses on every normal power-up.
 

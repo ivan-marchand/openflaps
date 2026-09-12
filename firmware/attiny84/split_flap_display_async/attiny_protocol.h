@@ -28,11 +28,21 @@ struct CommandEffect {
 //                     after the move (skips re-homing next time); 0 (default)
 //                     de-energizes once idle.
 //   'P'            -> de-energize coils now (no-op while busy)
-//   'S'            -> set speed  (persist + mirror)
-//   'O'            -> set offset (persist + mirror)
+//   'S'            -> set speed  (persist + mirror; no-op while busy)
+//   'O'            -> set offset (persist + mirror; no-op while busy)
 //   'C' (data>0)   -> change I2C address (persist + caller reboots to rejoin
-//                     the bus at the new address)
+//                     the bus at the new address; no-op while busy)
 //   'A'            -> display the char for this module's address
+//
+// S/O/C are no-ops while the motor is homing or moving, same as 'P': these
+// modules are fused with brown-out detection (BOD) disabled (see
+// INSTALL-attiny84.md), so an EEPROM write timed to the stepper's coil-
+// switching current can corrupt EEPROM content beyond just the byte being
+// written -- observed on hardware as e.g. setting speed leaving the module's
+// stored I2C address wrong after a later power cycle. The caller (main .ino)
+// only persists/mirrors the cfg value when the corresponding fx flag is
+// true, so a command dropped for being busy simply isn't reported as
+// applied and the next retry (once idle) persists it.
 inline CommandEffect handle_command(SplitFlapController& controller,
                                     ModuleConfig& cfg, char command, char data,
                                     char extra = 0) {
@@ -44,17 +54,23 @@ inline CommandEffect handle_command(SplitFlapController& controller,
     } else if (command == 'P') {
         controller.power_down();
     } else if (command == 'S') {
-        controller.update_speed((uint8_t)data);
-        cfg.speed = (uint8_t)data;
-        fx.write_speed = true;
+        if (!controller.is_busy()) {
+            controller.update_speed((uint8_t)data);
+            cfg.speed = (uint8_t)data;
+            fx.write_speed = true;
+        }
     } else if (command == 'O') {
-        controller.update_offset((uint8_t)data);
-        cfg.offset = (int8_t)(uint8_t)data;
-        fx.write_offset = true;
+        if (!controller.is_busy()) {
+            controller.update_offset((uint8_t)data);
+            cfg.offset = (int8_t)(uint8_t)data;
+            fx.write_offset = true;
+        }
     } else if (command == 'C' && data > 0) {
-        cfg.i2c_address = (uint8_t)data;
-        fx.change_address = true;
-        fx.new_address = (uint8_t)data;
+        if (!controller.is_busy()) {
+            cfg.i2c_address = (uint8_t)data;
+            fx.change_address = true;
+            fx.new_address = (uint8_t)data;
+        }
     } else if (command == 'A') {
         uint8_t addr = cfg.i2c_address;
         if (addr == 0xFF) addr = 0x10;

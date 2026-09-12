@@ -171,6 +171,48 @@ void test_cmd_P_is_noop_while_busy(void) {
     TEST_ASSERT_TRUE(c.is_energized());   // unaffected: still busy
 }
 
+// 'S'/'O'/'C' are no-ops while busy: an EEPROM write timed to the stepper's
+// coil-switching current can corrupt EEPROM content on these BOD-disabled
+// modules (see INSTALL-attiny84.md), so persistence must wait until idle.
+void test_cmd_S_is_noop_while_busy(void) {
+    SplitFlapController c = make_controller();
+    c.setup(10, 0);
+    ModuleConfig cfg{ 0x11, 10, 0 };
+
+    handle_command(c, cfg, 'D', 'A');
+    TEST_ASSERT_TRUE(c.is_busy());
+
+    CommandEffect fx = handle_command(c, cfg, 'S', (char)25);
+    TEST_ASSERT_FALSE(fx.write_speed);
+    TEST_ASSERT_EQUAL_UINT8(10, cfg.speed);   // unchanged
+}
+
+void test_cmd_O_is_noop_while_busy(void) {
+    SplitFlapController c = make_controller();
+    c.setup(10, 0);
+    ModuleConfig cfg{ 0x11, 10, 0 };
+
+    handle_command(c, cfg, 'D', 'A');
+    TEST_ASSERT_TRUE(c.is_busy());
+
+    CommandEffect fx = handle_command(c, cfg, 'O', (char)5);
+    TEST_ASSERT_FALSE(fx.write_offset);
+    TEST_ASSERT_EQUAL_INT8(0, cfg.offset);   // unchanged
+}
+
+void test_cmd_C_is_noop_while_busy(void) {
+    SplitFlapController c = make_controller();
+    c.setup(10, 0);
+    ModuleConfig cfg{ 0x11, 10, 0 };
+
+    handle_command(c, cfg, 'D', 'A');
+    TEST_ASSERT_TRUE(c.is_busy());
+
+    CommandEffect fx = handle_command(c, cfg, 'C', (char)0x14);
+    TEST_ASSERT_FALSE(fx.change_address);
+    TEST_ASSERT_EQUAL_UINT8(0x11, cfg.i2c_address);   // unchanged
+}
+
 void test_classify_button_press_boundaries(void) {
     TEST_ASSERT_EQUAL_INT((int)ButtonAction::NONE,      (int)classify_button_press(49));
     TEST_ASSERT_EQUAL_INT((int)ButtonAction::NEXT_CHAR, (int)classify_button_press(50));
@@ -194,6 +236,9 @@ int main(int, char **) {
     RUN_TEST(test_cmd_D_keep_energized_byte_stays_active);
     RUN_TEST(test_cmd_P_deenergizes_when_idle);
     RUN_TEST(test_cmd_P_is_noop_while_busy);
+    RUN_TEST(test_cmd_S_is_noop_while_busy);
+    RUN_TEST(test_cmd_O_is_noop_while_busy);
+    RUN_TEST(test_cmd_C_is_noop_while_busy);
     RUN_TEST(test_classify_button_press_boundaries);
     return UNITY_END();
 }
