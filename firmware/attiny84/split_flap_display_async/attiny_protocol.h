@@ -34,21 +34,8 @@ struct CommandEffect {
 //                     the bus at the new address; no-op while busy)
 //   'A'            -> display the char for this module's address
 //
-// S/O/C are no-ops while the motor is homing or moving, same as 'P': these
-// modules are fused with brown-out detection (BOD) disabled (see
-// INSTALL-attiny84.md), so an EEPROM write timed to the stepper's coil
-// current can corrupt EEPROM content beyond just the byte being written --
-// observed on hardware as e.g. setting speed leaving the module's stored
-// I2C address wrong after a later power cycle. When idle, they also
-// de-energize the coils first (via power_down(), which is a synchronous,
-// immediate pin write) if they were still holding current from a prior
-// keep_energized move: even steady holding current is enough of a draw to
-// risk the same corruption, and unlike a move in progress there's no reason
-// to wait -- the next display update just re-homes once, same as any other
-// idle-then-de-energized module. The caller (main .ino) only persists/
-// mirrors the cfg value when the corresponding fx flag is true, so a
-// command dropped for being busy simply isn't reported as applied and the
-// next retry (once idle) persists it.
+// S/O/C no-op while busy and de-energize first when idle (see CLAUDE.md:
+// EEPROM writes during coil current can corrupt these BOD-disabled chips).
 inline bool prepare_for_persist(SplitFlapController& controller) {
     if (controller.is_busy()) return false;
     controller.power_down();

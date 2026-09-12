@@ -171,9 +171,7 @@ void test_cmd_P_is_noop_while_busy(void) {
     TEST_ASSERT_TRUE(c.is_energized());   // unaffected: still busy
 }
 
-// 'S'/'O'/'C' are no-ops while busy: an EEPROM write timed to the stepper's
-// coil-switching current can corrupt EEPROM content on these BOD-disabled
-// modules (see INSTALL-attiny84.md), so persistence must wait until idle.
+// 'S'/'O'/'C' are no-ops while busy (see CLAUDE.md for why).
 void test_cmd_S_is_noop_while_busy(void) {
     SplitFlapController c = make_controller();
     c.setup(10, 0);
@@ -213,10 +211,7 @@ void test_cmd_C_is_noop_while_busy(void) {
     TEST_ASSERT_EQUAL_UINT8(0x11, cfg.i2c_address);   // unchanged
 }
 
-// 'S' still applies while idle-but-energized (e.g. holding position after a
-// keep_energized move), but de-energizes the coils first: holding current is
-// enough of a draw to risk the same EEPROM corruption as an active move, and
-// unlike a move in progress there's no reason to wait for it to end.
+// 'S' de-energizes idle-but-energized coils before persisting.
 void test_cmd_S_deenergizes_before_persisting_when_idle(void) {
     SplitFlapController c = make_controller();
     c.setup(10, 0);
