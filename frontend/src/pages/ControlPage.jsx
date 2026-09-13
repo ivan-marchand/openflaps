@@ -4,7 +4,7 @@ import { api } from '../api'
 import './ControlPage.css'
 
 export function ControlPage() {
-  const [state, setState] = useState({ mode: '...', text: '    ', status: '' })
+  const [state, setState] = useState({ mode: '...', text: '    ', status: '', module_count: 4, char_per_row: -1 })
   const [textInput, setTextInput] = useState('')
   const [claudeInput, setClaudeInput] = useState('')
   const [busy, setBusy] = useState(false)
@@ -31,7 +31,7 @@ export function ControlPage() {
       </div>
 
       <div class="display-card">
-        <SplitFlapDisplay text={state.text} />
+        <SplitFlapDisplay text={state.text} charPerRow={state.char_per_row} moduleCount={state.module_count} />
         <div class="status-line">{state.status}</div>
       </div>
 
@@ -40,14 +40,14 @@ export function ControlPage() {
         <div class="input-row">
           <input
             type="text"
-            maxLength={4}
+            maxLength={state.module_count}
             placeholder="HEY!"
             value={textInput}
             onInput={e => setTextInput(e.target.value)}
           />
           <button class="btn" disabled={busy || !textInput}
             onClick={() => withBusy(() => api.setText(textInput).then(r => {
-              if (r.ok) { setState(s => ({ ...s, text: textInput.toUpperCase().padEnd(4,' '), status: r.status })); setTextInput('') }
+              if (r.ok) { setState(s => ({ ...s, text: textInput.toUpperCase().padEnd(s.module_count, ' '), status: r.status })); setTextInput('') }
               return r
             }))}>
             SEND

@@ -17,6 +17,8 @@ export function SetupPage() {
   const [zones, setZones] = useState([])
   const [selectedZone, setSelectedZone] = useState('')
   const [maxConcurrent, setMaxConcurrent] = useState('')
+  const [charPerRow, setCharPerRow] = useState('')
+  const [moduleCount, setModuleCount] = useState(null)
   const [status, setStatus] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -27,6 +29,10 @@ export function SetupPage() {
     }).catch(() => {})
     api.getEnergy().then(data => {
       setMaxConcurrent(String(data.max_concurrent ?? ''))
+    }).catch(() => {})
+    api.getLayout().then(data => {
+      setCharPerRow(data.char_per_row > 0 ? String(data.char_per_row) : '')
+      setModuleCount(data.module_count ?? null)
     }).catch(() => {})
   }, [])
 
@@ -69,6 +75,17 @@ export function SetupPage() {
     try {
       const r = await api.saveEnergy(value)
       setStatus(r.ok ? 'Energy setting saved.' : r.error || 'Error.')
+    } finally { setBusy(false) }
+  }
+
+  async function saveLayout(e) {
+    e.preventDefault()
+    const value = charPerRow.trim() === '' ? -1 : parseInt(charPerRow, 10)
+    if (value !== -1 && (!value || value < 1)) return
+    setBusy(true)
+    try {
+      const r = await api.saveLayout(value)
+      setStatus(r.ok ? 'Layout saved.' : r.error || 'Error.')
     } finally { setBusy(false) }
   }
 
@@ -124,6 +141,24 @@ export function SetupPage() {
             Lower values save power by moving fewer flap motors at the same time, at the cost of slower updates.
           </div>
           <button class="btn" type="submit" disabled={busy || !maxConcurrent}>SAVE</button>
+        </form>
+      </div>
+
+      <div class="display-card" style="margin-bottom:12px;">
+        <div class="field-label">Characters per Row{moduleCount != null ? ` (${moduleCount} modules detected)` : ''}</div>
+        <form onSubmit={saveLayout}>
+          <input
+            type="number"
+            min="1"
+            placeholder="single row"
+            value={charPerRow}
+            onInput={e => setCharPerRow(e.target.value)}
+            style="margin-bottom:8px;"
+          />
+          <div style="margin-bottom:10px;font-size:0.85em;opacity:0.7;">
+            Leave blank for a single row spanning all modules. Set a value to wrap text onto a new physical row of modules after that many characters.
+          </div>
+          <button class="btn" type="submit" disabled={busy}>SAVE</button>
         </form>
       </div>
 

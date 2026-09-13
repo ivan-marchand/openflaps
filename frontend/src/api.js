@@ -22,6 +22,8 @@ export const api = {
   saveTimezone: (zone) => post('/api/setup/timezone', { zone }),
   getEnergy: () => fetch(BASE + '/api/energy').then(r => r.json()),
   saveEnergy: (maxConcurrent) => post('/api/setup/energy', { max_concurrent: maxConcurrent }),
+  getLayout: () => fetch(BASE + '/api/layout').then(r => r.json()),
+  saveLayout: (charPerRow) => post('/api/setup/layout', { char_per_row: charPerRow }),
   getModules: () => fetch(BASE + '/api/modules').then(r => r.json()),
   updateModule: (address, newAddress, speed, offset) =>
     post('/api/modules', { address, new_address: newAddress, speed, offset }),
