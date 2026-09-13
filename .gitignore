@@ -11,6 +11,7 @@ firmware/pico/wifi_config.json
 firmware/pico/api_config.json
 firmware/pico/timezone_config.json
 firmware/pico/energy_config.json
+firmware/pico/layout_config.json
 
 # macOS
 .DS_Store
