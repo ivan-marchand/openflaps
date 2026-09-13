@@ -413,7 +413,7 @@ def display_web_temp(has_previous=False):
     if temp is None:
         if not has_previous:
             # First fetch in this session failed — show ERR so screen isn't blank
-            print_string("ERR ", keep_energized=True)
+            print_string("ERR ")
             return "ERR "
         # Already showed a temperature — keep it and retry next interval
         return None
@@ -421,9 +421,7 @@ def display_web_temp(has_previous=False):
     temp = 32 + temp * 9/5
     t = int(round(temp))
     txt = "{:2d}°F".format(t)[:4]
-    # Keep coils energized: this mode refreshes every TEMP_UPDATE_INTERVAL,
-    # so re-homing before each update would be slow, noisy, and wear the switch.
-    print_string(txt, keep_energized=True)
+    print_string(txt)
     return txt
 
 # ----------------------------
@@ -446,7 +444,8 @@ def is_module_busy(address):
     except Exception:
         return False
 
-def print_string(s: str, keep_energized: bool = False):
+def print_string(s: str, keep_energized=False):
+    # keep_energized: bool, or a list/tuple of one bool per character of s.
     print(f"Displaying: {s}")
     addresses = i2c.scan()
     module_addresses = []
@@ -464,7 +463,12 @@ def print_string(s: str, keep_energized: bool = False):
     count = len(module_addresses)
     padded = (s + " " * count)[:count]
     chars = "".join(reversed(padded))
-    queue = list(zip(module_addresses, chars))
+    if isinstance(keep_energized, (list, tuple)):
+        padded_flags = (list(keep_energized) + [False] * count)[:count]
+        ke_flags = list(reversed(padded_flags))
+    else:
+        ke_flags = [keep_energized] * count
+    queue = list(zip(module_addresses, chars, ke_flags))
     # Dispatch leftmost (highest address) first, like natural left-to-right writing.
     queue.reverse()
 
@@ -476,13 +480,19 @@ def print_string(s: str, keep_energized: bool = False):
     in_flight = []
     while queue or in_flight:
         while queue and len(in_flight) < limit:
-            addr, c = queue.pop(0)
-            print_char(addr, c, keep_energized)
+            addr, c, ke = queue.pop(0)
+            print_char(addr, c, ke)
             time.sleep_ms(20)
             in_flight.append(addr)
         if in_flight:
             time.sleep_ms(20)
             in_flight = [a for a in in_flight if is_module_busy(a)]
+
+def time_keep_energized(minutes):
+    # Only minutes-units is held energized (it changes every update); it
+    # still rests once per 10 minutes, on '9' rather than '0' since that's
+    # the cheaper point to re-home from (see CLAUDE.md for the math).
+    return [False, False, False, minutes % 10 != 9]
 
 def home_all():
     for address in i2c.scan():
@@ -767,7 +777,8 @@ def handle_request(conn):
                     last_text = "{:02d}{:02d}".format(t[3], t[4])
                     # Keep coils energized: this mode updates every minute, so
                     # re-homing before each update would be slow, noisy, and wear the switch.
-                    print_string(last_text, keep_energized=True)
+                    # (Minutes-units still gets a periodic rest -- see time_keep_energized().)
+                    print_string(last_text, keep_energized=time_keep_energized(minutes))
                 elif mode == MODE_TEMP:
                     last_temp_update = 0
                 http_send_json(conn, {"ok": True, "status": status_line})
@@ -970,7 +981,7 @@ def tick():
         if current_minutes != minutes:
             minutes = current_minutes
             last_text = "{:02d}{:02d}".format(hours, minutes)
-            print_string(last_text, keep_energized=True)
+            print_string(last_text, keep_energized=time_keep_energized(minutes))
 
     elif mode == MODE_TEMP:
         if now - last_temp_update >= TEMP_UPDATE_INTERVAL:
