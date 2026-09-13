@@ -4,7 +4,7 @@ import { api } from '../api'
 import './ControlPage.css'
 
 export function ControlPage() {
-  const [state, setState] = useState({ mode: '...', text: '    ', status: '' })
+  const [state, setState] = useState({ mode: '...', text: '    ', status: '', module_count: 4, char_per_row: -1 })
   const [textInput, setTextInput] = useState('')
   const [claudeInput, setClaudeInput] = useState('')
   const [busy, setBusy] = useState(false)
@@ -23,6 +23,22 @@ export function ControlPage() {
     finally { setBusy(false) }
   }
 
+  function sendText() {
+    if (busy || !textInput) return
+    withBusy(() => api.setText(textInput).then(r => {
+      if (r.ok) { setState(s => ({ ...s, text: textInput.toUpperCase().padEnd(s.module_count, ' '), status: r.status })); setTextInput('') }
+      return r
+    }))
+  }
+
+  function askClaude() {
+    if (busy || !claudeInput) return
+    withBusy(() => api.askClaude(claudeInput).then(r => {
+      if (r.ok) { setState(s => ({ ...s, text: r.text || s.text, status: r.status })); setClaudeInput('') }
+      return r
+    }))
+  }
+
   return (
     <div class="control-page">
       <div class="page-header">
@@ -31,7 +47,7 @@ export function ControlPage() {
       </div>
 
       <div class="display-card">
-        <SplitFlapDisplay text={state.text} />
+        <SplitFlapDisplay text={state.text} charPerRow={state.char_per_row} moduleCount={state.module_count} />
         <div class="status-line">{state.status}</div>
       </div>
 
@@ -40,16 +56,13 @@ export function ControlPage() {
         <div class="input-row">
           <input
             type="text"
-            maxLength={4}
+            maxLength={state.module_count}
             placeholder="HEY!"
             value={textInput}
             onInput={e => setTextInput(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && sendText()}
           />
-          <button class="btn" disabled={busy || !textInput}
-            onClick={() => withBusy(() => api.setText(textInput).then(r => {
-              if (r.ok) { setState(s => ({ ...s, text: textInput.toUpperCase().padEnd(4,' '), status: r.status })); setTextInput('') }
-              return r
-            }))}>
+          <button class="btn" disabled={busy || !textInput} onClick={sendText}>
             SEND
           </button>
         </div>
@@ -61,12 +74,9 @@ export function ControlPage() {
             placeholder="Are you smart?"
             value={claudeInput}
             onInput={e => setClaudeInput(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && askClaude()}
           />
-          <button class="btn" disabled={busy || !claudeInput}
-            onClick={() => withBusy(() => api.askClaude(claudeInput).then(r => {
-              if (r.ok) { setState(s => ({ ...s, text: r.text || s.text, status: r.status })); setClaudeInput('') }
-              return r
-            }))}>
+          <button class="btn" disabled={busy || !claudeInput} onClick={askClaude}>
             ASK
           </button>
         </div>
