@@ -17,12 +17,22 @@ CONFIG_FILE = "wifi_config.json"
 API_CONFIG_FILE = "api_config.json"
 TIMEZONE_CONFIG_FILE = "timezone_config.json"
 ENERGY_CONFIG_FILE = "energy_config.json"
+LAYOUT_CONFIG_FILE = "layout_config.json"
 
 DEFAULT_MAX_CONCURRENT_MODULES = 4  # matches display width -> no limiting by default
+DEFAULT_CHAR_PER_ROW = -1  # -1 = single row (all modules in one line)
 
 # I2C
 i2c = I2C(0, freq=100000, scl=Pin(1), sda=Pin(0))
 BASE_ADDR = 0x11   # first character module address
+
+# Tracks the (char, keep_energized) last actually sent to each address, so
+# print_string() can skip modules whose target hasn't changed. Resending an
+# unchanged char to a de-energized module would otherwise force a pointless
+# re-home every time (request_char_index() always re-homes when coils are
+# off, even if the target position equals the current one) -- see
+# split_flap_controller.h. Cleared by home_all() since homing invalidates it.
+last_displayed_chars = {}
 
 # Onboard status LED. On the Pico W this is actually wired through the
 # CYW43 wifi chip rather than a plain GPIO, but MicroPython's Pin("LED", ...)
@@ -115,6 +125,24 @@ def save_max_concurrent(value):
         return True
     except Exception as e:
         print("Failed to save energy config:", e)
+        return False
+
+def load_char_per_row():
+    try:
+        with open(LAYOUT_CONFIG_FILE, "r") as f:
+            return int(ujson.load(f).get("char_per_row", DEFAULT_CHAR_PER_ROW))
+    except:
+        return DEFAULT_CHAR_PER_ROW
+
+def save_char_per_row(value):
+    global char_per_row
+    try:
+        with open(LAYOUT_CONFIG_FILE, "w") as f:
+            ujson.dump({"char_per_row": value}, f)
+        char_per_row = value
+        return True
+    except Exception as e:
+        print("Failed to save layout config:", e)
         return False
 
 # ----------------------------
@@ -444,31 +472,67 @@ def is_module_busy(address):
     except Exception:
         return False
 
-def print_string(s: str, keep_energized=False):
-    # keep_energized: bool, or a list/tuple of one bool per character of s.
-    print(f"Displaying: {s}")
+def get_module_addresses():
     addresses = i2c.scan()
     module_addresses = []
     address = BASE_ADDR
     while address in addresses:
         module_addresses.append(address)
         address += 1
+    return module_addresses
 
-    # Modules are wired right-to-left, i.e. BASE_ADDR is the rightmost
-    # character: left-align/pad s to the module count as before, then
-    # reverse it so increasing address still reads left-to-right physically.
+def print_string(s: str, keep_energized=False):
+    # keep_energized: bool, or a list/tuple of one bool per character of s.
+    print(f"Displaying: {s}")
+    module_addresses = get_module_addresses()
+    count = len(module_addresses)
+
+    # char_per_row > 0 splits the modules into physical rows of that many
+    # characters each (last row may be shorter); <= 0 means a single row
+    # spanning every module, matching the original behaviour.
+    row_width = char_per_row if char_per_row > 0 else count
+    rows = [module_addresses[i:i + row_width] for i in range(0, count, row_width)] if row_width > 0 else []
+
+    # Left-align/pad-or-hard-wrap s to the total module count, one character
+    # per module in natural reading order (row by row, top to bottom).
+    padded = (s + " " * count)[:count]
+    if isinstance(keep_energized, (list, tuple)):
+        padded_flags = (list(keep_energized) + [False] * count)[:count]
+    else:
+        padded_flags = [keep_energized] * count
+
+    # Each row is wired right-to-left, i.e. its first address is the
+    # rightmost character: reverse the characters/flags within each row so
+    # increasing address still reads left-to-right physically. Rows
+    # themselves stay in address order (row 0 = lowest addresses).
     # Built via reversed()+join rather than a [::-1] slice: MicroPython's
     # string implementation doesn't support step!=1 slicing on strings that
     # contain non-ASCII characters (e.g. the multi-byte "°" from temp mode).
-    count = len(module_addresses)
-    padded = (s + " " * count)[:count]
-    chars = "".join(reversed(padded))
-    if isinstance(keep_energized, (list, tuple)):
-        padded_flags = (list(keep_energized) + [False] * count)[:count]
-        ke_flags = list(reversed(padded_flags))
-    else:
-        ke_flags = [keep_energized] * count
-    queue = list(zip(module_addresses, chars, ke_flags))
+    module_addresses_out = []
+    chars = []
+    ke_flags = []
+    idx = 0
+    for row in rows:
+        n = len(row)
+        row_chars = padded[idx:idx + n]
+        row_flags = padded_flags[idx:idx + n]
+        idx += n
+        module_addresses_out.extend(row)
+        chars.extend(reversed(row_chars))
+        ke_flags.extend(reversed(row_flags))
+    module_addresses = module_addresses_out
+
+    # Skip modules whose (char, keep_energized) target hasn't changed since
+    # the last dispatch -- resending an unchanged char to a de-energized
+    # module would otherwise force a pointless re-home (see
+    # last_displayed_chars above).
+    queue = []
+    for addr, c, ke in zip(module_addresses, chars, ke_flags):
+        target = (c, ke)
+        if last_displayed_chars.get(addr) == target:
+            continue
+        last_displayed_chars[addr] = target
+        queue.append((addr, c, ke))
     # Dispatch leftmost (highest address) first, like natural left-to-right writing.
     queue.reverse()
 
@@ -495,11 +559,13 @@ def time_keep_energized(minutes):
     return [False, False, False, minutes % 10 != 9]
 
 def home_all():
+    global last_displayed_chars
     for address in i2c.scan():
         try:
             i2c.writeto(address, b'I\x00')
         except:
             print(f"Unable Home display {address}")
+    last_displayed_chars = {}
 
 def read_module_params(address):
     try:
@@ -559,25 +625,27 @@ def eightball_roll():
 # ----------------------------
 # Claude API
 # ----------------------------
-CLAUDE_SYSTEM = (
-    "You control a 4-character split-flap display. "
-    "Reply with EXACTLY 4 characters using only these characters: "
-    "space A-Z 0-9 . , : - ! ? / degree-sign. "
-    "Pad with spaces if needed. "
-    "Examples: YES  NO   COOL IDK  NOPE 42.0 RAIN SNOW"
-)
+def claude_system_prompt(count):
+    return (
+        "You control a {0}-character split-flap display. "
+        "Reply with EXACTLY {0} characters using only these characters: "
+        "space A-Z 0-9 . , : - ! ? / degree-sign. "
+        "Pad with spaces if needed. "
+        "Examples: YES NO COOL IDK NOPE 42.0 RAIN SNOW (padded/truncated to {0} chars)"
+    ).format(count)
 
 def call_claude(prompt):
     import ssl  # inline: ssl is RAM-heavy; defer loading until Claude is actually called
+    count = len(get_module_addresses())
     if not api_key:
         print("No Claude API key configured")
-        return "ERR "
+        return ("ERR" + " " * count)[:count]
 
     host = "api.anthropic.com"
     payload = ujson.dumps({
         "model": "claude-haiku-4-5",
-        "max_tokens": 20,
-        "system": CLAUDE_SYSTEM,
+        "max_tokens": max(20, count + 5),
+        "system": claude_system_prompt(count),
         "messages": [{"role": "user", "content": prompt}]
     }).encode("utf-8")  # encode to bytes so Content-Length is correct
     headers = (
@@ -618,12 +686,12 @@ def call_claude(prompt):
             text = data["content"][0]["text"].upper()
             allowed = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:-!?/\xb0"
             text = "".join(c for c in text if c in allowed)
-            return (text + "    ")[:4]
+            return (text + " " * count)[:count]
         print("Claude error:", data)
-        return "ERR "
+        return ("ERR" + " " * count)[:count]
     except Exception as e:
         print("Claude API error:", e)
-        return "ERR "
+        return ("ERR" + " " * count)[:count]
 
 # ----------------------------
 # WiFi + NTP
@@ -725,6 +793,7 @@ next_ntp_sync = time.time() + (NTP_SYNC_INTERVAL if _synced else NTP_RETRY_INTER
 current_timezone = load_timezone()
 api_key = load_api_key()
 max_concurrent_modules = load_max_concurrent()
+char_per_row = load_char_per_row()
 
 server = start_server()
 
@@ -751,6 +820,8 @@ def handle_request(conn):
                 "mode": mode,
                 "text": last_text,
                 "status": status_line,
+                "module_count": len(get_module_addresses()),
+                "char_per_row": char_per_row,
             })
 
         elif route == "/api/text" and method == "POST":
@@ -865,6 +936,7 @@ def handle_request(conn):
             else:
                 try:
                     i2c.writeto(int(address), bytes([ord('P'), 0x00]))
+                    last_displayed_chars.pop(int(address), None)
                     http_send_json(conn, {"ok": True})
                 except Exception as e:
                     http_send_json(conn, {"ok": False, "error": str(e)}, code="500 Internal Server Error")
@@ -910,6 +982,24 @@ def handle_request(conn):
                 http_send_json(conn, {"ok": False, "error": "max_concurrent must be a positive integer."}, code="400 Bad Request")
             else:
                 save_max_concurrent(value)
+                http_send_json(conn, {"ok": True})
+
+        elif route == "/api/layout" and method == "GET":
+            http_send_json(conn, {
+                "char_per_row": char_per_row,
+                "module_count": len(get_module_addresses()),
+            })
+
+        elif route == "/api/setup/layout" and method == "POST":
+            data = parse_json_body(req)
+            try:
+                value = int(data.get("char_per_row"))
+                if value != -1 and value < 1:
+                    raise ValueError()
+            except (TypeError, ValueError):
+                http_send_json(conn, {"ok": False, "error": "char_per_row must be -1 or a positive integer."}, code="400 Bad Request")
+            else:
+                save_char_per_row(value)
                 http_send_json(conn, {"ok": True})
 
         elif route.startswith("/assets/"):

@@ -116,16 +116,54 @@ input[type=text]:focus, input[type=password]:focus {
 
 .setup-link:hover { border-color: #f0a500; color: #f0a500; }
 
-.control-page td {
-  padding: 8px;
-  border-bottom: 1px solid #2a2a2a;
+.modules-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.module-card {
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.module-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.module-addr {
   font-family: 'Courier New', Courier, monospace;
   font-size: 0.9rem;
   color: #e0e0e0;
-  vertical-align: top;
+  font-weight: 700;
 }
 
-.control-page td input[type=number] {
+.module-stat {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.75rem;
+  margin-left: auto;
+}
+
+.module-card-fields {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.module-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.module-field input[type=number] {
+  width: 70px;
   background: #111;
   border: 1px solid #444;
   border-radius: 6px;
@@ -136,6 +174,13 @@ input[type=text]:focus, input[type=password]:focus {
   outline: none;
 }
 
-.control-page td input[type=number]:focus {
+.module-field input[type=number]:focus {
   border-color: #f0a500;
+}
+
+.module-card-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
 }

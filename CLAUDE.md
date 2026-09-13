@@ -70,6 +70,8 @@ Or just run `./firmware/pico/deploy.sh` which builds, copies, and uploads everyt
 | `api.powerDownModule(addr)` | `POST /api/modules/power_down` |
 | `api.getEnergy()` | `GET /api/energy` |
 | `api.saveEnergy(maxConcurrent)` | `POST /api/setup/energy` |
+| `api.getLayout()` | `GET /api/layout` |
+| `api.saveLayout(charPerRow)` | `POST /api/setup/layout` |
 
 ## Key Files
 
@@ -82,11 +84,12 @@ Or just run `./firmware/pico/deploy.sh` which builds, copies, and uploads everyt
 
 ## Configuration (Pico)
 
-Config is stored in JSON files on Pico flash — all three are gitignored:
+Config is stored in JSON files on Pico flash — all are gitignored:
 - `wifi_config.json` — `{"ssid": "...", "password": "..."}`
 - `api_config.json` — `{"key": "sk-ant-..."}` — Claude API key
 - `timezone_config.json` — `{"zone": "America/New_York"}` — IANA timezone name
 - `energy_config.json` — `{"max_concurrent": 4}` — max modules allowed to move simultaneously
+- `layout_config.json` — `{"char_per_row": -1}` — modules per physical row; `-1` means a single row spanning every detected module
 
 Constants in `main.py`:
 - `BASE_ADDR = 0x11` — First I2C device address (0x10 is reserved for pairing mode). Modules are wired right-to-left, so `BASE_ADDR` is the rightmost character and address increases leftward.
@@ -102,7 +105,11 @@ Constants in `main.py`:
 | `MODE_TEMP` | `"temp"` | Shows outdoor °F via open-meteo, updated every 60 s |
 | `MODE_TEXT` | `"text"` | Shows user text or Claude response, static |
 
-Display is 4 characters wide. `print_string(s)` left-aligns/pads `s` to the module count, then reverses it before assigning to addresses in increasing order, since modules are wired right-to-left (`BASE_ADDR` is the rightmost character). Modules are dispatched leftmost (highest address) first, like natural left-to-right writing.
+Display width is auto-detected: `get_module_addresses()` walks `i2c.scan()` results from `BASE_ADDR` upward to find the contiguous module count (also returned as `module_count` by `GET /api/state` / `GET /api/layout`, and used to size the frontend's text input and Claude's target length — nothing is hardcoded to 4 characters anymore). `print_string(s)` left-aligns/hard-wraps `s` to that count, then reverses each row before assigning to addresses in increasing order, since modules are wired right-to-left within a row (`BASE_ADDR` is the rightmost character of the first row). Modules are dispatched leftmost (highest address) first, like natural left-to-right writing.
+
+`char_per_row` (see `layout_config.json` above) splits the auto-detected modules into physical rows of that many characters each (last row may be shorter); `-1` (default) keeps everything on one row. Text wraps onto the next row every `char_per_row` characters — a hard wrap, no word-breaking. Rows stay in address order (row 0 = lowest addresses); each row is independently reversed for its own right-to-left wiring. The frontend's `SplitFlapDisplay` mirrors this exact wrapping so the on-screen preview matches the physical layout.
+
+`print_string()` also skips re-sending a `D` command to any module whose target `(char, keep_energized)` hasn't changed since the last dispatch (tracked in the module-level `last_displayed_chars` cache). This matters because `request_char_index()` on the ATtiny always re-homes when coils are off, even if the target position equals the current one — so blindly resending an unchanged character to a de-energized module used to force a pointless re-home every time. `home_all()` clears the cache (homing invalidates any assumption about physical position), and `POST /api/modules/power_down` evicts just that module's entry (so a manually powered-down module isn't skipped next time even if its target char is unchanged).
 
 ## Energy Saving
 
@@ -113,7 +120,7 @@ Display is 4 characters wide. `print_string(s)` left-aligns/pads `s` to the modu
 - A `P` command explicitly de-energizes a module's coils on demand (no-op while it's busy); reachable from the Pico/UI via `POST /api/modules/power_down`.
 - Each module's live `energized` state is included in `GET /api/modules`, so the number of currently-energized modules can be used as a rough live estimate of holding-current draw. The ModulesPage shows it per module with a "PWR OFF" button.
 - `print_string(s)` on the Pico limits how many modules are allowed to move at the same time, capping peak current draw across the bus. It dispatches `D` commands up to `max_concurrent_modules` at a time, then polls each module's `busy` status byte and starts the next queued character as slots free up.
-- `max_concurrent_modules` defaults to `4` (no limiting) and is configurable via `GET /api/energy` / `POST /api/setup/energy` (SetupPage "Max Modules Moving at Once"). Lowering it trades display update latency for lower peak power draw.
+- `max_concurrent_modules` defaults to `4` and is configurable via `GET /api/energy` / `POST /api/setup/energy` (SetupPage "Max Modules Moving at Once"). Lowering it trades display update latency for lower peak power draw.
 
 ## ATtiny84 I2C Protocol
 
@@ -156,8 +163,8 @@ Requires `mpremote` (`pip install mpremote`).
 ## Claude API Integration
 
 - Model: `claude-haiku-4-5`
-- Prompt is system-constrained to return exactly 4 characters from the display charset
-- Response is sanitized: non-charset characters stripped, padded/trimmed to 4 chars
+- Prompt is system-constrained to return exactly `module_count` characters from the display charset (auto-detected, not hardcoded)
+- Response is sanitized: non-charset characters stripped, padded/trimmed to `module_count` chars
 
 ## Sensitive Files
 

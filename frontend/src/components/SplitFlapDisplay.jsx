@@ -25,11 +25,20 @@ function Tile({ char }) {
   )
 }
 
-export function SplitFlapDisplay({ text = '    ' }) {
-  const chars = text.padEnd(4, ' ').slice(0, 4).split('')
+export function SplitFlapDisplay({ text = '    ', moduleCount = 4, charPerRow = -1 }) {
+  const chars = text.padEnd(moduleCount, ' ').slice(0, moduleCount).split('')
+  const rowWidth = charPerRow > 0 ? charPerRow : chars.length
+  const rows = []
+  for (let i = 0; i < chars.length; i += rowWidth) {
+    rows.push(chars.slice(i, i + rowWidth))
+  }
   return (
-    <div class="sfd-row">
-      {chars.map((c, i) => <Tile key={i} char={c} />)}
+    <div class="sfd-grid">
+      {rows.map((row, r) => (
+        <div class="sfd-row" key={r}>
+          {row.map((c, i) => <Tile key={i} char={c} />)}
+        </div>
+      ))}
     </div>
   )
 }

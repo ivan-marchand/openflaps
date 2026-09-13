@@ -63,60 +63,61 @@ function ModuleRow({ module, onSaved, usedAddresses }) {
   }
 
   return (
-    <tr style={isPairing ? { background: 'rgba(240,165,0,0.06)' } : {}}>
-      <td>
-        <div style="display:flex; align-items:center; gap:6px;">
-          <span style="font-size:0.75rem; color:#888; font-family:monospace; min-width:36px;">
-            {isPairing ? <span style="color:#f0a500;">PAIR</span> : toHex(addr)}
-          </span>
+    <div class="module-card" style={isPairing ? { background: 'rgba(240,165,0,0.06)' } : {}}>
+      <div class="module-card-header">
+        <span class="module-addr">
+          {isPairing ? <span style="color:#f0a500;">PAIR</span> : toHex(addr)}
+        </span>
+        <span class="module-stat" style={{ color: missedColor }}>MISSED {module.missed_steps === null ? '—' : module.missed_steps}</span>
+        <span class="module-stat" style={{ color: module.energized === null ? '#888' : module.energized ? '#f0a500' : '#888' }}>
+          {module.energized === null ? '—' : module.energized ? 'ON' : 'off'}
+        </span>
+      </div>
+
+      <div class="module-card-fields">
+        <label class="module-field">
+          <span class="field-label">Addr</span>
           <input
             type="number" min="17" max="127"
             value={addr}
             onInput={e => setAddr(e.target.value)}
-            style={isPairing ? 'width:60px; border-color:#f0a500;' : 'width:60px;'}
+            style={isPairing ? 'border-color:#f0a500;' : ''}
           />
-        </div>
-      </td>
-      <td>
-        <input
-          type="number" min="1" max="255"
-          value={speed}
-          onInput={e => setSpeed(e.target.value)}
-          style="width:60px;"
-        />
-      </td>
-      <td>
-        <input
-          type="number" min="-127" max="127"
-          value={offset}
-          onInput={e => setOffset(e.target.value)}
-          style="width:60px;"
-        />
-      </td>
-      <td style={{ color: missedColor, fontFamily: 'monospace' }}>
-        {module.missed_steps === null ? '—' : `${module.missed_steps}`}
-      </td>
-      <td style={{ color: module.energized === null ? '#888' : module.energized ? '#f0a500' : '#888', fontFamily: 'monospace' }}>
-        {module.energized === null ? '—' : module.energized ? 'ON' : 'off'}
-      </td>
-      <td>
-        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-          <button class="btn" disabled={busy} onClick={save}
-            style={isPairing ? 'border-color:#f0a500; color:#f0a500;' : ''}>
-            {isPairing ? 'ASSIGN' : 'SAVE'}
-          </button>
-          <button class="btn" disabled={busy} onClick={() => api.identifyModule(module.address)}
-            title="Display address on this module">
-            ID
-          </button>
-          <button class="btn" disabled={busy || !module.energized} onClick={powerDown}
-            title="De-energize this module's coils now">
-            PWR OFF
-          </button>
-          {status && <span style="font-size:0.75rem; color:#888;">{status}</span>}
-        </div>
-      </td>
-    </tr>
+        </label>
+        <label class="module-field">
+          <span class="field-label">Speed</span>
+          <input
+            type="number" min="1" max="255"
+            value={speed}
+            onInput={e => setSpeed(e.target.value)}
+          />
+        </label>
+        <label class="module-field">
+          <span class="field-label">Offset</span>
+          <input
+            type="number" min="-127" max="127"
+            value={offset}
+            onInput={e => setOffset(e.target.value)}
+          />
+        </label>
+      </div>
+
+      <div class="module-card-actions">
+        <button class="btn" disabled={busy} onClick={save}
+          style={isPairing ? 'border-color:#f0a500; color:#f0a500;' : ''}>
+          {isPairing ? 'ASSIGN' : 'SAVE'}
+        </button>
+        <button class="btn" disabled={busy} onClick={() => api.identifyModule(module.address)}
+          title="Display address on this module">
+          ID
+        </button>
+        <button class="btn" disabled={busy || !module.energized} onClick={powerDown}
+          title="De-energize this module's coils now">
+          PWR OFF
+        </button>
+        {status && <span style="font-size:0.75rem; color:#888;">{status}</span>}
+      </div>
+    </div>
   )
 }
 
@@ -152,21 +153,10 @@ export function ModulesPage() {
           <div class="status-line">No modules found.</div>
         )}
         {!loading && modules && modules.length > 0 && (
-          <div style="overflow-x:auto;">
-            <table style="width:100%; border-collapse:collapse;">
-              <thead>
-                <tr>
-                  {['ADDR','SPEED','OFFSET','MISSED','ENERGIZED',''].map(h => (
-                    <th key={h} style="text-align:left; padding:6px 8px; font-size:0.7rem; color:#888; letter-spacing:0.05em; border-bottom:1px solid #333;">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {modules.map(m => (
-                  <ModuleRow key={m.address} module={m} onSaved={load} usedAddresses={usedAddresses} />
-                ))}
-              </tbody>
-            </table>
+          <div class="modules-list">
+            {modules.map(m => (
+              <ModuleRow key={m.address} module={m} onSaved={load} usedAddresses={usedAddresses} />
+            ))}
           </div>
         )}
       </div>
