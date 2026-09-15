@@ -185,7 +185,9 @@ def http_send_json(conn, data, code="200 OK"):
     conn.send("Connection: close\r\n\r\n")
     conn.sendall(body)
 
-def read_http_request(conn, max_bytes=4096):
+def read_http_headers(conn, max_bytes=4096):
+    # Raw bytes, no decoding -- binary-body endpoints must use this instead of
+    # read_http_request(), whose UTF-8 decode would corrupt binary data.
     conn.settimeout(0.25)
     data = b""
     try:
@@ -198,16 +200,21 @@ def read_http_request(conn, max_bytes=4096):
                 break
     except OSError:
         pass
+    header_bytes, sep, body_bytes = data.partition(b"\r\n\r\n")
+    return header_bytes, (body_bytes if sep else b"")
 
-    # For POST requests, read the body using Content-Length
-    header_bytes, _, body_bytes = data.partition(b"\r\n\r\n")
-    content_length = 0
+def parse_content_length(header_bytes):
     for line in header_bytes.split(b"\r\n"):
         if line.lower().startswith(b"content-length:"):
             try:
-                content_length = int(line.split(b":", 1)[1].strip())
+                return int(line.split(b":", 1)[1].strip())
             except:
                 pass
+    return 0
+
+def read_http_request(conn, max_bytes=4096):
+    header_bytes, body_bytes = read_http_headers(conn, max_bytes)
+    content_length = parse_content_length(header_bytes)
 
     while len(body_bytes) < content_length:
         try:
@@ -798,22 +805,237 @@ char_per_row = load_char_per_row()
 server = start_server()
 
 # ----------------------------
+# Firmware update (zip upload)
+# ----------------------------
+# POST /api/firmware/update -- see CLAUDE.md for the zip build recipe and format notes.
+FIRMWARE_UPDATE_TMP = "firmware_update.zip"
+FIRMWARE_UPDATE_MAX_BYTES = 150 * 1024  # margin over current firmware size
+
+FIRMWARE_MANIFEST_ENTRY = "manifest.json"          # required entry inside the uploaded zip
+FIRMWARE_MANIFEST_FILE = "firmware_manifest.json"  # on-device record of what's currently installed
+
+ZIP_LOCAL_FILE_SIG = b"PK\x03\x04"
+
+def _zip_u16(b, o):
+    return b[o] | (b[o + 1] << 8)
+
+def _zip_u32(b, o):
+    return b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)
+
+def _scan_zip_entries(zf):
+    # Yields (name, method, uncomp_size, data) per non-directory entry.
+    while True:
+        sig = zf.read(4)
+        if sig != ZIP_LOCAL_FILE_SIG:
+            return  # ran into the central directory / EOCD -- no more entries
+
+        hdr = zf.read(26)
+        if len(hdr) < 26:
+            raise ValueError("Truncated zip header")
+
+        flags = _zip_u16(hdr, 2)
+        method = _zip_u16(hdr, 4)
+        comp_size = _zip_u32(hdr, 14)
+        uncomp_size = _zip_u32(hdr, 18)
+        name_len = _zip_u16(hdr, 22)
+        extra_len = _zip_u16(hdr, 24)
+
+        # Bit 3 = sizes live in a trailing data descriptor, not the local
+        # header -- can't locate this entry's data without them.
+        if flags & 0x08:
+            raise ValueError("Streamed zip entries (data descriptor) are not supported")
+
+        name = zf.read(name_len).decode("utf-8", "ignore").replace("\\", "/").lstrip("/")
+        if extra_len:
+            zf.read(extra_len)
+
+        data = zf.read(comp_size)
+        if len(data) < comp_size:
+            raise ValueError("Truncated zip data for {}".format(name))
+
+        if name.endswith("/"):
+            continue
+        yield name, method, uncomp_size, data
+
+def _zip_inflate(method, data, uncomp_size, name):
+    if method == 0:
+        payload = data
+    elif method == 8:
+        import deflate
+        import io
+        payload = deflate.DeflateIO(io.BytesIO(data), deflate.RAW).read()
+    else:
+        raise ValueError("Unsupported compression method for {}".format(name))
+    if len(payload) != uncomp_size:
+        raise ValueError("Size mismatch extracting {}".format(name))
+    return payload
+
+def _sanitize_zip_name(name):
+    # Guards against a manifest/zip trying to write outside the intended
+    # files via "../" or an absolute path.
+    parts = name.split("/")
+    if not name or name.startswith("/") or any(p in ("", ".", "..") for p in parts):
+        raise ValueError("Unsafe path in firmware package: {}".format(name))
+    return name
+
+def _firmware_write_file(path, data):
+    if "/" in path:
+        directory = path.rsplit("/", 1)[0]
+        try:
+            import os
+            os.mkdir(directory)
+        except OSError:
+            pass  # already exists
+    with open(path, "wb") as f:
+        f.write(data)
+
+def _remove_quietly(path):
+    try:
+        import os
+        os.remove(path)
+    except OSError:
+        pass
+
+def load_firmware_manifest():
+    try:
+        with open(FIRMWARE_MANIFEST_FILE, "r") as f:
+            return ujson.load(f)
+    except Exception:
+        return []
+
+def save_firmware_manifest(files):
+    with open(FIRMWARE_MANIFEST_FILE, "w") as f:
+        ujson.dump(files, f)
+
+def unpack_firmware_zip(zip_path):
+    # Pass 1: find and parse manifest.json, and note every entry name present
+    # in the zip, without writing anything yet.
+    manifest_files = None
+    zip_entries = set()
+    with open(zip_path, "rb") as zf:
+        for name, method, uncomp_size, data in _scan_zip_entries(zf):
+            zip_entries.add(name)
+            if name == FIRMWARE_MANIFEST_ENTRY:
+                manifest_files = ujson.loads(_zip_inflate(method, data, uncomp_size, name))
+
+    if not isinstance(manifest_files, list):
+        raise ValueError("Zip is missing a valid {}".format(FIRMWARE_MANIFEST_ENTRY))
+    if "main.py" not in manifest_files:
+        raise ValueError("manifest is missing mandatory main.py")
+
+    manifest_files = [_sanitize_zip_name(n) for n in manifest_files]
+    missing = [n for n in manifest_files if n not in zip_entries]
+    if missing:
+        raise ValueError("Zip is missing file(s) listed in manifest: {}".format(", ".join(missing)))
+
+    # Pass 2: only now write anything, one file at a time straight to flash
+    # (not atomic across files -- if a later entry fails, files already
+    # written from earlier entries stay updated).
+    wanted = set(manifest_files)
+    extracted = []
+    with open(zip_path, "rb") as zf:
+        for name, method, uncomp_size, data in _scan_zip_entries(zf):
+            if name not in wanted:
+                continue
+            payload = _zip_inflate(method, data, uncomp_size, name)
+            _firmware_write_file(name, payload)
+            extracted.append(name)
+
+    # Remove files that were part of the previous manifest but aren't in this
+    # one -- only after every new file has landed successfully.
+    for old_name in load_firmware_manifest():
+        if old_name not in wanted:
+            _remove_quietly(old_name)
+    save_firmware_manifest(manifest_files)
+
+    return extracted
+
+def handle_firmware_update(conn, header_bytes, body_prefix):
+    content_length = parse_content_length(header_bytes)
+
+    if content_length <= 0:
+        http_send_json(conn, {"ok": False, "error": "Missing Content-Length."}, code="400 Bad Request")
+        conn.close()
+        return
+    if content_length > FIRMWARE_UPDATE_MAX_BYTES:
+        http_send_json(conn, {"ok": False, "error": "Firmware package too large."}, code="400 Bad Request")
+        conn.close()
+        return
+
+    # Stream straight to flash -- never through read_http_request()'s UTF-8 decode.
+    written = len(body_prefix)
+    try:
+        with open(FIRMWARE_UPDATE_TMP, "wb") as f:
+            f.write(body_prefix)
+            conn.settimeout(10)
+            while written < content_length:
+                chunk = conn.recv(1024)
+                if not chunk:
+                    break
+                f.write(chunk)
+                written += len(chunk)
+    except OSError as e:
+        http_send_json(conn, {"ok": False, "error": "Upload failed: {}".format(e)}, code="500 Internal Server Error")
+        conn.close()
+        return
+
+    if written < content_length:
+        _remove_quietly(FIRMWARE_UPDATE_TMP)
+        http_send_json(conn, {"ok": False, "error": "Upload incomplete."}, code="400 Bad Request")
+        conn.close()
+        return
+
+    try:
+        extracted = unpack_firmware_zip(FIRMWARE_UPDATE_TMP)
+    except Exception as e:
+        _remove_quietly(FIRMWARE_UPDATE_TMP)
+        http_send_json(conn, {"ok": False, "error": "Invalid firmware package: {}".format(e)}, code="400 Bad Request")
+        conn.close()
+        return
+
+    _remove_quietly(FIRMWARE_UPDATE_TMP)
+
+    http_send_json(conn, {"ok": True, "files": extracted, "status": "Firmware updated, rebooting..."})
+    conn.close()
+
+    import machine  # inline: only needed on this reboot path
+    sleep(1)
+    machine.reset()
+
+# ----------------------------
 # Request handler
 # ----------------------------
 def handle_request(conn):
     global mode, last_text, status_line, current_timezone, minutes, last_temp_update
     try:
-        req = read_http_request(conn)
-        if not req:
+        header_bytes, body_prefix = read_http_headers(conn)
+        if not header_bytes:
             conn.close()
             conn = None
             return
-        line = req.split("\r\n", 1)[0]
+        line = header_bytes.split(b"\r\n", 1)[0].decode("utf-8", "ignore")
         parts = line.split()
         path = parts[1] if len(parts) >= 2 else "/"
 
         method = parts[0] if parts else "GET"
         route, _ = parse_query(path)
+
+        if route == "/api/firmware/update" and method == "POST":
+            handle_firmware_update(conn, header_bytes, body_prefix)
+            conn = None
+            return
+
+        content_length = parse_content_length(header_bytes)
+        body_bytes = body_prefix
+        while len(body_bytes) < content_length:
+            try:
+                chunk = conn.recv(512)
+                if not chunk:
+                    break
+                body_bytes += chunk
+            except OSError:
+                break
+        req = (header_bytes + b"\r\n\r\n" + body_bytes).decode("utf-8", "ignore")
 
         if route == "/api/state":
             http_send_json(conn, {
