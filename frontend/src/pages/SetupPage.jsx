@@ -19,6 +19,7 @@ export function SetupPage() {
   const [maxConcurrent, setMaxConcurrent] = useState('')
   const [charPerRow, setCharPerRow] = useState('')
   const [moduleCount, setModuleCount] = useState(null)
+  const [firmwareFile, setFirmwareFile] = useState(null)
   const [status, setStatus] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -87,6 +88,23 @@ export function SetupPage() {
       const r = await api.saveLayout(value)
       setStatus(r.ok ? 'Layout saved.' : r.error || 'Error.')
     } finally { setBusy(false) }
+  }
+
+  async function updateFirmware(e) {
+    e.preventDefault()
+    if (!firmwareFile) return
+    setBusy(true)
+    setStatus('Uploading firmware and rebooting...')
+    try {
+      const r = await api.updateFirmware(firmwareFile)
+      setStatus(r.ok ? 'Firmware updated. Device rebooting...' : r.error || 'Error.')
+      if (r.ok) setFirmwareFile(null)
+    } catch {
+      // fetch can lose the race against the device's own reboot
+      setStatus('Uploaded. Device rebooting...')
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
@@ -159,6 +177,22 @@ export function SetupPage() {
             Leave blank for a single row spanning all modules. Set a value to wrap text onto a new physical row of modules after that many characters.
           </div>
           <button class="btn" type="submit" disabled={busy}>SAVE</button>
+        </form>
+      </div>
+
+      <div class="display-card" style="margin-bottom:12px;">
+        <div class="field-label">Firmware Update</div>
+        <form onSubmit={updateFirmware}>
+          <input
+            type="file"
+            accept=".zip"
+            onInput={e => setFirmwareFile(e.target.files[0] || null)}
+            style="margin-bottom:10px;"
+          />
+          <div style="margin-bottom:10px;font-size:0.85em;opacity:0.7;">
+            Upload a zip of the built firmware (main.py, tz.py, index.html, setup.html, assets/index.js, assets/index.css). The device unpacks it onto flash and reboots.
+          </div>
+          <button class="btn" type="submit" disabled={busy || !firmwareFile}>UPLOAD &amp; REBOOT</button>
         </form>
       </div>
 
