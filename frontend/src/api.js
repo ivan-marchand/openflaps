@@ -29,4 +29,9 @@ export const api = {
     post('/api/modules', { address, new_address: newAddress, speed, offset }),
   identifyModule: (address) => post('/api/modules/identify', { address }),
   powerDownModule: (address) => post('/api/modules/power_down', { address }),
+  updateFirmware: (zipFile) => fetch(BASE + '/api/firmware/update', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/zip' },
+    body: zipFile,
+  }).then(r => r.json()),
 }
