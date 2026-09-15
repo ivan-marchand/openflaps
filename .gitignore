@@ -13,6 +13,9 @@ firmware/pico/timezone_config.json
 firmware/pico/energy_config.json
 firmware/pico/layout_config.json
 
+# MicroPython runtime scratch file for POST /api/firmware/update
+firmware/pico/firmware_update.zip
+
 # macOS
 .DS_Store
 

@@ -68,6 +68,7 @@ Or just run `./firmware/pico/deploy.sh` which builds, copies, and uploads everyt
 | `api.updateModule(...)` | `POST /api/modules` |
 | `api.identifyModule(addr)` | `POST /api/modules/identify` |
 | `api.powerDownModule(addr)` | `POST /api/modules/power_down` |
+| `api.updateFirmware(zipFile)` | `POST /api/firmware/update` |
 | `api.getEnergy()` | `GET /api/energy` |
 | `api.saveEnergy(maxConcurrent)` | `POST /api/setup/energy` |
 | `api.getLayout()` | `GET /api/layout` |
@@ -77,7 +78,7 @@ Or just run `./firmware/pico/deploy.sh` which builds, copies, and uploads everyt
 
 - `firmware/pico/main.py` — Main Pico controller (HTTP server, I2C master, display logic)
 - `firmware/pico/tz.py` — Timezone table with DST rules (~35 zones), `get_offset()`, `zone_list()`
-- `firmware/pico/deploy.sh` — Deploys all firmware files to Pico via `mpremote`
+- `firmware/pico/deploy.sh` — Deploys all firmware files to Pico via `mpremote` (USB) or `POST /api/firmware/update` (`--ota <host>`)
 - `firmware/pico/index.html` — Built Preact SPA (served to browser)
 - `firmware/pico/setup.html` — AP provisioning page (served when no WiFi config)
 - `firmware/attiny84/split_flap_display_async/split_flap_display_async.ino` — Motor controller
@@ -151,14 +152,48 @@ A fresh module (`EEPROM_I2C_ADDRESS` unset, i.e. `0xFF`) does **not** join the I
 
 ## Deploying to Pico
 
+`deploy.sh` supports two transports — USB (default) and WiFi/OTA:
+
 ```bash
 cd firmware/pico
-./deploy.sh
+./deploy.sh                  # USB, via mpremote
+./deploy.sh --ota <host>     # WiFi, via POST /api/firmware/update (host = Pico's IP/hostname)
 ```
 
-The script finds the Pico on `/dev/cu.usbmodem*` (macOS) or `/dev/ttyACM*` (Linux), uploads `main.py`, `tz.py`, `index.html`, `setup.html`, `assets/index.js`, `assets/index.css`, then reboots.
+- **USB** finds the Pico on `/dev/cu.usbmodem*` (macOS) or `/dev/ttyACM*` (Linux), uploads
+  `main.py`, `tz.py`, `index.html`, `setup.html`, `assets/index.js`, `assets/index.css` via
+  `mpremote`, then reboots. Requires `mpremote` (`pip install mpremote`).
+- **`--ota <host>`** zips those same six files (from `firmware/pico/`, so entry names match
+  what the device expects) and POSTs the zip to `http://<host>/api/firmware/update` with
+  `curl`; the Pico streams it straight to flash, unpacks it, and reboots. Requires `curl`
+  and `zip`. Useful for a Pico that's already reachable over WiFi and not physically
+  accessible for USB. The equivalent manual steps, if not using the script:
 
-Requires `mpremote` (`pip install mpremote`).
+  ```bash
+  cd firmware/pico
+  zip -r update.zip main.py tz.py index.html setup.html assets/index.js assets/index.css
+  curl -X POST -H "Content-Type: application/zip" --data-binary @update.zip http://<host>/api/firmware/update
+  ```
+
+### `POST /api/firmware/update` (the OTA endpoint itself)
+
+- Only entries named exactly `main.py`, `tz.py`, `index.html`, `setup.html`,
+  `assets/index.js`, or `assets/index.css` are written (`FIRMWARE_FILES` in
+  `main.py`); anything else in the zip (e.g. `__MACOSX/`, `.DS_Store`) is
+  silently skipped. This is also the path-traversal guard — no entry name is
+  ever used to write outside those exact files.
+- Supports zip entries compressed with `deflate` (method 8, what `zip`
+  normally produces) or `stored` (method 0, `zip -0`). Requires a
+  MicroPython build with the `deflate` module (stdlib since v1.21).
+  "Streamed" entries using a trailing data descriptor (rare; only produced
+  when writing to a non-seekable stream) aren't supported.
+- The upload is streamed to a temporary `firmware_update.zip` on flash
+  (gitignored) rather than buffered in RAM, and each file is decompressed
+  one at a time — the Pico W has very little free heap.
+- Capped at `FIRMWARE_UPDATE_MAX_BYTES` (150 KB); not atomic across files —
+  if a later entry in the zip fails, files already unpacked from earlier
+  entries stay updated. Re-uploading a known-good zip is the recovery path.
+- The SetupPage "Firmware Update" card wraps this with a file picker.
 
 ## Claude API Integration
 
@@ -177,7 +212,7 @@ All three are gitignored.
 
 ## No Formal Build System
 
-- Pico: upload via `./firmware/pico/deploy.sh` (uses `mpremote`)
+- Pico: upload via `./firmware/pico/deploy.sh` (USB via `mpremote`, or `--ota <host>` over WiFi)
 - ATtiny84: compile/upload via Arduino IDE with ATTinyCore 1.5.2
 - Frontend: `npm run build` in `frontend/`
 - Tools: `python tools/generate_flaps.py`
