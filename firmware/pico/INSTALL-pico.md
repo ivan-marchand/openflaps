@@ -40,6 +40,7 @@ Requires `mpremote` (`pip install mpremote`).
 1. Open Thonny and connect to the Pico (bottom-right interpreter selector)
 2. Upload the following files to the Pico's root:
    - `firmware/pico/main.py`
+   - `firmware/pico/tz.py`
    - `firmware/pico/index.html`
    - `firmware/pico/setup.html`
    - `firmware/pico/assets/index.js`
@@ -64,7 +65,12 @@ On first boot the Pico has no WiFi credentials, so it starts as a **WiFi access 
 
 ## 4. Find the Pico on your network
 
-After rebooting the Pico prints its IP address to the serial console:
+The Pico advertises itself over mDNS, so on most networks you can just open
+**http://openflaps.local/** in your browser — no need to know the IP.
+
+If `.local` resolution doesn't work on your network (some routers/OSes don't
+support mDNS), fall back to the IP address. After rebooting the Pico prints
+it to the serial console:
 
 ```
 Connected to WiFi
@@ -77,13 +83,13 @@ To read this with `mpremote`:
 mpremote connect auto repl
 ```
 
-Alternatively, check your router's DHCP client list for a device named **Pico W**.
+Alternatively, check your router's DHCP client list for a device named **openflaps**.
 
 ---
 
 ## 5. Open the web UI
 
-Navigate to `http://<pico-ip>/` in your browser. Three pages are available:
+Navigate to `http://openflaps.local/` (or `http://<pico-ip>/`) in your browser. Three pages are available:
 
 | URL | Page |
 |---|---|
@@ -121,3 +127,22 @@ The **Ask Claude** feature on the control page requires an Anthropic API key.
 - Confirm you're on the same network as the Pico
 - Check the Pico's IP hasn't changed (set a DHCP reservation on your router)
 - Try a hard refresh (`Ctrl+Shift+R` / `Cmd+Shift+R`)
+
+### `openflaps.local` doesn't resolve
+
+- Requires MicroPython **v1.25.0 or later** — that's the first release where
+  the rp2/Pico W port's built-in mDNS responder actually works (earlier
+  versions initialized it but never attached it to the WiFi interface, so it
+  silently did nothing). Re-flash with a current UF2 from the
+  [download page](https://micropython.org/download/RPI_PICO_W/) if unsure.
+- mDNS/Bonjour must also be supported and not blocked on your network — most
+  home networks, macOS, and iOS support it out of the box; Windows needs
+  [Bonjour](https://support.apple.com/kb/DL999) or iTunes installed, and
+  some routers/guest networks block multicast traffic between clients
+- **Firefox on Android**: known not to work, even though Android itself has
+  supported `.local` resolution since 2021 — Firefox's **Secure DNS
+  (DNS-over-HTTPS)** intercepts the lookup before it reaches Android's
+  resolver. Fix in Firefox: Settings → General → **DNS over HTTPS** → turn it
+  off, or add `openflaps.local` as an exception. Chrome on Android resolves
+  `.local` fine without this.
+- Fall back to `http://<pico-ip>/` (see step 4 above) if it still doesn't work
