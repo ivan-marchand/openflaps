@@ -78,7 +78,7 @@ Or just run `./firmware/pico/deploy.sh` which builds, copies, and uploads everyt
 
 - `firmware/pico/main.py` — Main Pico controller (HTTP server, I2C master, display logic)
 - `firmware/pico/tz.py` — Timezone table with DST rules (~35 zones), `get_offset()`, `zone_list()`
-- `firmware/pico/deploy.sh` — Deploys all firmware files to Pico via `mpremote` (USB) or `POST /api/firmware/update` (`--ota <host>`)
+- `firmware/pico/deploy.sh` — Deploys all firmware files to Pico via `mpremote` (USB) or `POST /api/firmware/update` (`--ota [host]`)
 - `firmware/pico/index.html` — Built Preact SPA (served to browser)
 - `firmware/pico/setup.html` — AP provisioning page (served when no WiFi config)
 - `firmware/attiny84/split_flap_display_async/split_flap_display_async.ino` — Motor controller
@@ -95,8 +95,24 @@ Config is stored in JSON files on Pico flash — all are gitignored:
 Constants in `main.py`:
 - `BASE_ADDR = 0x11` — First I2C device address (0x10 is reserved for pairing mode). Modules are wired right-to-left, so `BASE_ADDR` is the rightmost character and address increases leftward.
 - `AP_SSID = "OpenFlap-Setup"`, `AP_PASSWORD = "openflap1"` — AP mode credentials
+- `MDNS_HOSTNAME = "openflaps"` — device is reachable at `http://openflaps.local/` once on WiFi
 - `LAT = 42.4618`, `LON = -71.3642` — Location for weather API (open-meteo)
 - NTP re-syncs every 3600 seconds
+
+## mDNS
+
+`openflaps.local` resolution comes entirely from MicroPython's own built-in mDNS
+responder (rp2 port, lwIP-backed) — there is no custom responder code in this repo.
+`connect_wifi()` calls `network.hostname(MDNS_HOSTNAME)` before `wlan.connect()`;
+that alone is what makes the built-in responder come up and answer for
+`openflaps.local` once WiFi connects. Requires MicroPython **v1.25.0+** — the rp2
+port's mDNS was previously initialized but never actually attached to the WiFi
+interface (fixed in [micropython#17057](https://github.com/micropython/micropython/pull/17057)),
+so it silently did nothing on older builds. An earlier version of this project
+shipped a hand-rolled UDP responder (`firmware/pico/mdns.py`, bound directly to
+`224.0.0.251:5353`) before this native support was verified working; it was removed
+because it crashed boot outright (`OSError: [Errno 98] EADDRINUSE` binding a port
+the built-in responder already held) rather than just being redundant.
 
 ## Display Modes
 
@@ -157,14 +173,15 @@ A fresh module (`EEPROM_I2C_ADDRESS` unset, i.e. `0xFF`) does **not** join the I
 ```bash
 cd firmware/pico
 ./deploy.sh                  # USB, via mpremote
-./deploy.sh --ota <host>     # WiFi, via POST /api/firmware/update (host = Pico's IP/hostname)
+./deploy.sh --ota [host]     # WiFi, via POST /api/firmware/update (host defaults to openflaps.local)
 ```
 
 - **USB** finds the Pico on `/dev/cu.usbmodem*` (macOS) or `/dev/ttyACM*` (Linux), uploads
   `main.py`, `tz.py`, `index.html`, `setup.html`, `assets/index.js`, `assets/index.css` via
   `mpremote`, then reboots. Requires `mpremote` (`pip install mpremote`).
-- **`--ota <host>`** zips those same six files (from `firmware/pico/`, so entry names match
-  what the device expects) plus a generated `manifest.json` listing them, and POSTs the zip
+- **`--ota [host]`** (host defaults to `openflaps.local` via mDNS) zips those same six
+  files (from `firmware/pico/`, so entry names match what the device expects) plus a
+  generated `manifest.json` listing them, and POSTs the zip
   to `http://<host>/api/firmware/update` with `curl`; the Pico streams it straight to flash,
   unpacks it, and reboots. Requires `curl` and `zip`. Useful for a Pico that's already
   reachable over WiFi and not physically accessible for USB. The equivalent manual steps,
@@ -173,10 +190,12 @@ cd firmware/pico
   ```bash
   cd firmware/pico
   echo '["main.py","tz.py","index.html","setup.html","assets/index.js","assets/index.css"]' > manifest.json
-  zip -r update.zip main.py tz.py index.html setup.html assets/index.js assets/index.css manifest.json
+  zip -0 -r update.zip main.py tz.py index.html setup.html assets/index.js assets/index.css manifest.json
   rm manifest.json
   curl -X POST -H "Content-Type: application/zip" --data-binary @update.zip http://<host>/api/firmware/update
   ```
+
+  `-0` (store, no compression) matters here, not just style — see the endpoint notes below.
 
 ### `POST /api/firmware/update` (the OTA endpoint itself)
 
@@ -198,9 +217,46 @@ cd firmware/pico
   MicroPython build with the `deflate` module (stdlib since v1.21).
   "Streamed" entries using a trailing data descriptor (rare; only produced
   when writing to a non-seekable stream) aren't supported.
-- The upload is streamed to a temporary `firmware_update.zip` on flash
-  (gitignored) rather than buffered in RAM, and each file is decompressed
-  one at a time — the Pico W has very little free heap.
+- **`deploy.sh` packages with `zip -0` (store) deliberately**, not just for
+  simplicity: decompressing a `deflate`-compressed entry needs a 32K window
+  buffer (`deflate.DeflateIO`'s `wbits=15` — see below) that the Pico W's
+  fragmented heap can fail to allocate unpredictably (worked or failed
+  depending on uptime/fragmentation in testing), even with every other
+  buffer in the unpack path already minimized. Stored entries skip
+  `deflate.DeflateIO` entirely, so there's no large allocation at all —
+  worth the bigger upload (this file set is ~90 KB stored vs. ~29 KB
+  deflated, still well under `FIRMWARE_UPDATE_MAX_BYTES`) for updates that
+  work deterministically instead of only when the heap happens to be
+  unfragmented enough. `deflate` decoding is still fully supported server-side
+  for anyone packaging a zip a different way, just not exercised by this
+  script.
+- Decompression passes `wbits=15` (32K window) to `deflate.DeflateIO` explicitly —
+  `RAW` format has no header to infer the window size from, so it otherwise
+  defaults to an 8 (256-byte) window, which fails with `OSError EINVAL` on any
+  back-reference further back than that (i.e. on any file past a couple hundred
+  bytes — `zip` itself uses the full 32K window).
+- `deflate.DeflateIO` requires its source to implement MicroPython's native
+  C-level stream protocol (checked on first read via `mp_get_stream_raise`,
+  which then calls the source's C read function pointer directly, never a
+  Python-level `.read()`) — a pure-Python object doesn't qualify, however it
+  implements `.read(n)`, and fails with `OSError("stream operation not
+  supported")`. `io.BytesIO` does qualify, so `_iter_inflate()` buffers one
+  entry's *compressed* bytes there (via `_BoundedReader`, in
+  `_ZIP_CHUNK_SIZE` reads) before decompressing — only the larger
+  *decompressed* output is streamed out in `_ZIP_CHUNK_SIZE` chunks, so peak
+  RAM per file is roughly its compressed size (often well under its
+  decompressed size for compressible text/code) plus the 32K deflate window.
+- The upload itself is streamed straight to a temporary `firmware_update.zip`
+  on flash (gitignored) in fixed-size chunks rather than buffered in RAM, and
+  `_scan_zip_entries()` reads each entry's raw bytes from that file on demand
+  via `_BoundedReader` rather than upfront (skipping unread remainders with
+  `skip_rest()` so the file position stays correct for the next entry --
+  `_BoundedReader.read()` also caps an unbounded/no-size-argument call to
+  `_ZIP_CHUNK_SIZE`, since callers like the compressed-byte-buffering loop
+  above may ask for "everything" and a large single read defeats the point).
+  `gc.collect()` runs after each extracted file to reclaim its buffers before
+  the next one. The Pico W's free heap is too tight (~264 KB SRAM total,
+  shared with the WiFi stack, HTTP server, etc.) to buffer whole large files.
 - Capped at `FIRMWARE_UPDATE_MAX_BYTES` (150 KB); not atomic across files —
   if a later entry in the zip fails, files already unpacked from earlier
   entries stay updated. Re-uploading a known-good zip is the recovery path.
@@ -223,7 +279,7 @@ All three are gitignored.
 
 ## No Formal Build System
 
-- Pico: upload via `./firmware/pico/deploy.sh` (USB via `mpremote`, or `--ota <host>` over WiFi)
+- Pico: upload via `./firmware/pico/deploy.sh` (USB via `mpremote`, or `--ota [host]` over WiFi)
 - ATtiny84: compile/upload via Arduino IDE with ATTinyCore 1.5.2
 - Frontend: `npm run build` in `frontend/`
 - Tools: `python tools/generate_flaps.py`

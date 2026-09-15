@@ -10,7 +10,7 @@ interface and communicates via I²C with ATtiny84 controllers, each driving a
 
 ## Features
 
-- **Web UI** — control display from any browser on your network
+- **Web UI** — control display from any browser on your network, reachable at `openflaps.local` via mDNS
 - **Modes** — show custom text, clock, outdoor temperature, magic 8-ball, or ask Claude AI
 - **Modules page** — calibrate each character module (I²C address, speed, offset)
 - **Pairing mode** — add new modules without opening Arduino IDE
@@ -63,7 +63,7 @@ Follow the guides in order:
 1. [Print & assemble the mechanical parts](mechanical/PRINT-GUIDE.md)
 2. [Flash the ATtiny84 module firmware](firmware/attiny84/INSTALL-attiny84.md)
 3. [Set up the Raspberry Pi Pico W](firmware/pico/INSTALL-pico.md)
-4. Power everything on and open `http://<pico-ip>/` in your browser
+4. Power everything on and open `http://openflaps.local/` (or `http://<pico-ip>/`) in your browser
 
 ---
 
