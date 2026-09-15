@@ -164,24 +164,35 @@ cd firmware/pico
   `main.py`, `tz.py`, `index.html`, `setup.html`, `assets/index.js`, `assets/index.css` via
   `mpremote`, then reboots. Requires `mpremote` (`pip install mpremote`).
 - **`--ota <host>`** zips those same six files (from `firmware/pico/`, so entry names match
-  what the device expects) and POSTs the zip to `http://<host>/api/firmware/update` with
-  `curl`; the Pico streams it straight to flash, unpacks it, and reboots. Requires `curl`
-  and `zip`. Useful for a Pico that's already reachable over WiFi and not physically
-  accessible for USB. The equivalent manual steps, if not using the script:
+  what the device expects) plus a generated `manifest.json` listing them, and POSTs the zip
+  to `http://<host>/api/firmware/update` with `curl`; the Pico streams it straight to flash,
+  unpacks it, and reboots. Requires `curl` and `zip`. Useful for a Pico that's already
+  reachable over WiFi and not physically accessible for USB. The equivalent manual steps,
+  if not using the script:
 
   ```bash
   cd firmware/pico
-  zip -r update.zip main.py tz.py index.html setup.html assets/index.js assets/index.css
+  echo '["main.py","tz.py","index.html","setup.html","assets/index.js","assets/index.css"]' > manifest.json
+  zip -r update.zip main.py tz.py index.html setup.html assets/index.js assets/index.css manifest.json
+  rm manifest.json
   curl -X POST -H "Content-Type: application/zip" --data-binary @update.zip http://<host>/api/firmware/update
   ```
 
 ### `POST /api/firmware/update` (the OTA endpoint itself)
 
-- Only entries named exactly `main.py`, `tz.py`, `index.html`, `setup.html`,
-  `assets/index.js`, or `assets/index.css` are written (`FIRMWARE_FILES` in
-  `main.py`); anything else in the zip (e.g. `__MACOSX/`, `.DS_Store`) is
-  silently skipped. This is also the path-traversal guard — no entry name is
-  ever used to write outside those exact files.
+- The zip must contain a `manifest.json` entry: a JSON array of the file paths in that
+  update, e.g. `["main.py", "tz.py", ..., "assets/index.js"]`. `main.py` must be one of
+  them — the update is rejected otherwise, since a device that boots without it is bricked
+  until re-flashed over USB. Every path the manifest lists must also actually be present as
+  an entry in the zip, or the whole update is rejected before anything is written.
+- Only files named in the manifest are ever written — this is also the path-traversal
+  guard (each name is checked for `..`/absolute-path components); anything else in the zip
+  (e.g. `__MACOSX/`, `.DS_Store`) is silently skipped.
+- After a successful update, the manifest is compared against the previous one (persisted
+  on flash as `firmware_manifest.json`, gitignored) and any file present in the old manifest
+  but not the new one is deleted — this is how a file dropped from the firmware (e.g. a
+  renamed asset) gets cleaned up instead of lingering on flash. That comparison, and the
+  deletion, only happen after every file in the new manifest has been written successfully.
 - Supports zip entries compressed with `deflate` (method 8, what `zip`
   normally produces) or `stored` (method 0, `zip -0`). Requires a
   MicroPython build with the `deflate` module (stdlib since v1.21).

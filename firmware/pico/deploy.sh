@@ -73,10 +73,19 @@ deploy_ota() {
   done
 
   ZIP="$(mktemp -t openflaps-firmware-XXXXXX).zip"
-  trap 'rm -f "$ZIP"' EXIT
+  MANIFEST_DIR="$(mktemp -d)"
+  trap 'rm -f "$ZIP"; rm -rf "$MANIFEST_DIR"' EXIT
 
   echo "Packaging firmware..."
+  MANIFEST_JSON="["
+  for f in "${FILES[@]}"; do
+    MANIFEST_JSON+="\"$f\","
+  done
+  MANIFEST_JSON="${MANIFEST_JSON%,}]"
+  echo "$MANIFEST_JSON" > "$MANIFEST_DIR/manifest.json"
+
   (cd "$PICO_DIR" && zip -q -r "$ZIP" "${FILES[@]}")
+  zip -q -j "$ZIP" "$MANIFEST_DIR/manifest.json"
 
   echo "Uploading to http://$HOST/api/firmware/update ..."
   RESPONSE=$(curl -sS -X POST \

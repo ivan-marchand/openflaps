@@ -811,12 +811,8 @@ server = start_server()
 FIRMWARE_UPDATE_TMP = "firmware_update.zip"
 FIRMWARE_UPDATE_MAX_BYTES = 150 * 1024  # margin over current firmware size
 
-# Whitelist: only these exact entries are ever written -- blocks path traversal
-# and overwriting unrelated files (e.g. wifi_config.json).
-FIRMWARE_FILES = {
-    "main.py", "tz.py", "index.html", "setup.html",
-    "assets/index.js", "assets/index.css",
-}
+FIRMWARE_MANIFEST_ENTRY = "manifest.json"          # required entry inside the uploaded zip
+FIRMWARE_MANIFEST_FILE = "firmware_manifest.json"  # on-device record of what's currently installed
 
 ZIP_LOCAL_FILE_SIG = b"PK\x03\x04"
 
@@ -825,6 +821,62 @@ def _zip_u16(b, o):
 
 def _zip_u32(b, o):
     return b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)
+
+def _scan_zip_entries(zf):
+    # Yields (name, method, uncomp_size, data) per non-directory entry.
+    while True:
+        sig = zf.read(4)
+        if sig != ZIP_LOCAL_FILE_SIG:
+            return  # ran into the central directory / EOCD -- no more entries
+
+        hdr = zf.read(26)
+        if len(hdr) < 26:
+            raise ValueError("Truncated zip header")
+
+        flags = _zip_u16(hdr, 2)
+        method = _zip_u16(hdr, 4)
+        comp_size = _zip_u32(hdr, 14)
+        uncomp_size = _zip_u32(hdr, 18)
+        name_len = _zip_u16(hdr, 22)
+        extra_len = _zip_u16(hdr, 24)
+
+        # Bit 3 = sizes live in a trailing data descriptor, not the local
+        # header -- can't locate this entry's data without them.
+        if flags & 0x08:
+            raise ValueError("Streamed zip entries (data descriptor) are not supported")
+
+        name = zf.read(name_len).decode("utf-8", "ignore").replace("\\", "/").lstrip("/")
+        if extra_len:
+            zf.read(extra_len)
+
+        data = zf.read(comp_size)
+        if len(data) < comp_size:
+            raise ValueError("Truncated zip data for {}".format(name))
+
+        if name.endswith("/"):
+            continue
+        yield name, method, uncomp_size, data
+
+def _zip_inflate(method, data, uncomp_size, name):
+    if method == 0:
+        payload = data
+    elif method == 8:
+        import deflate
+        import io
+        payload = deflate.DeflateIO(io.BytesIO(data), deflate.RAW).read()
+    else:
+        raise ValueError("Unsupported compression method for {}".format(name))
+    if len(payload) != uncomp_size:
+        raise ValueError("Size mismatch extracting {}".format(name))
+    return payload
+
+def _sanitize_zip_name(name):
+    # Guards against a manifest/zip trying to write outside the intended
+    # files via "../" or an absolute path.
+    parts = name.split("/")
+    if not name or name.startswith("/") or any(p in ("", ".", "..") for p in parts):
+        raise ValueError("Unsafe path in firmware package: {}".format(name))
+    return name
 
 def _firmware_write_file(path, data):
     if "/" in path:
@@ -844,59 +896,58 @@ def _remove_quietly(path):
     except OSError:
         pass
 
+def load_firmware_manifest():
+    try:
+        with open(FIRMWARE_MANIFEST_FILE, "r") as f:
+            return ujson.load(f)
+    except Exception:
+        return []
+
+def save_firmware_manifest(files):
+    with open(FIRMWARE_MANIFEST_FILE, "w") as f:
+        ujson.dump(files, f)
+
 def unpack_firmware_zip(zip_path):
-    # Extracts one entry at a time straight to flash -- not atomic across files.
+    # Pass 1: find and parse manifest.json, and note every entry name present
+    # in the zip, without writing anything yet.
+    manifest_files = None
+    zip_entries = set()
+    with open(zip_path, "rb") as zf:
+        for name, method, uncomp_size, data in _scan_zip_entries(zf):
+            zip_entries.add(name)
+            if name == FIRMWARE_MANIFEST_ENTRY:
+                manifest_files = ujson.loads(_zip_inflate(method, data, uncomp_size, name))
+
+    if not isinstance(manifest_files, list):
+        raise ValueError("Zip is missing a valid {}".format(FIRMWARE_MANIFEST_ENTRY))
+    if "main.py" not in manifest_files:
+        raise ValueError("manifest is missing mandatory main.py")
+
+    manifest_files = [_sanitize_zip_name(n) for n in manifest_files]
+    missing = [n for n in manifest_files if n not in zip_entries]
+    if missing:
+        raise ValueError("Zip is missing file(s) listed in manifest: {}".format(", ".join(missing)))
+
+    # Pass 2: only now write anything, one file at a time straight to flash
+    # (not atomic across files -- if a later entry fails, files already
+    # written from earlier entries stay updated).
+    wanted = set(manifest_files)
     extracted = []
     with open(zip_path, "rb") as zf:
-        while True:
-            sig = zf.read(4)
-            if sig != ZIP_LOCAL_FILE_SIG:
-                break  # ran into the central directory / EOCD -- no more entries
-
-            hdr = zf.read(26)
-            if len(hdr) < 26:
-                raise ValueError("Truncated zip header")
-
-            flags = _zip_u16(hdr, 2)
-            method = _zip_u16(hdr, 4)
-            comp_size = _zip_u32(hdr, 14)
-            uncomp_size = _zip_u32(hdr, 18)
-            name_len = _zip_u16(hdr, 22)
-            extra_len = _zip_u16(hdr, 24)
-
-            # Bit 3 = sizes live in a trailing data descriptor, not the local
-            # header -- can't locate this entry's data without them.
-            if flags & 0x08:
-                raise ValueError("Streamed zip entries (data descriptor) are not supported")
-
-            name = zf.read(name_len).decode("utf-8", "ignore").replace("\\", "/").lstrip("/")
-            if extra_len:
-                zf.read(extra_len)
-
-            data = zf.read(comp_size)
-            if len(data) < comp_size:
-                raise ValueError("Truncated zip data for {}".format(name))
-
-            if name.endswith("/") or name not in FIRMWARE_FILES:
+        for name, method, uncomp_size, data in _scan_zip_entries(zf):
+            if name not in wanted:
                 continue
-
-            if method == 0:
-                payload = data
-            elif method == 8:
-                import deflate
-                import io
-                payload = deflate.DeflateIO(io.BytesIO(data), deflate.RAW).read()
-            else:
-                raise ValueError("Unsupported compression method for {}".format(name))
-
-            if len(payload) != uncomp_size:
-                raise ValueError("Size mismatch extracting {}".format(name))
-
+            payload = _zip_inflate(method, data, uncomp_size, name)
             _firmware_write_file(name, payload)
             extracted.append(name)
 
-    if not extracted:
-        raise ValueError("No usable files found in zip")
+    # Remove files that were part of the previous manifest but aren't in this
+    # one -- only after every new file has landed successfully.
+    for old_name in load_firmware_manifest():
+        if old_name not in wanted:
+            _remove_quietly(old_name)
+    save_firmware_manifest(manifest_files)
+
     return extracted
 
 def handle_firmware_update(conn, header_bytes, body_prefix):
