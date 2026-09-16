@@ -85,7 +85,8 @@ void enter_pairing_mode() {
   Wire.begin(0x10);
   Wire.onReceive(receive_event);
   Wire.onRequest(request_event);
-  controller.initialize();  // home as visual confirmation
+  controller.initialize();       // home as visual confirmation
+  controller.display_char('P');  // ready to be paired by the Pico
 }
 
 // Fires on CHANGE: records press time on falling edge, sets short-press flag on rising edge.
@@ -155,9 +156,10 @@ void setup() {
 
   // Setup I2C connection — only if this module has already been paired
   // (EEPROM_I2C_ADDRESS set). A fresh/unpaired module stays off the I2C bus
-  // and doesn't home until the user long-presses the button to explicitly
-  // enter pairing mode (enter_pairing_mode()). This avoids multiple freshly
-  // wired-up modules all defaulting to the same 0x10 address at once.
+  // until the user long-presses the button to explicitly enter pairing mode
+  // (enter_pairing_mode()); this avoids multiple freshly wired-up modules all
+  // defaulting to the same 0x10 address at once. It still homes below like
+  // any other module, so it's visibly alive while waiting to be paired.
   uint8_t i2c_address = EEPROM.read(EEPROM_I2C_ADDRESS);
   bool is_paired = (i2c_address != 0xFF);
   if (is_paired) {
@@ -180,8 +182,9 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(BUTTON_PIN), btn_isr, CHANGE);
 
   controller.setup(speed, offset);
-  if (is_paired) {
-    controller.initialize();  // home only once we have a real identity
+  controller.initialize();  // home at boot so a fresh module visibly works
+  if (!is_paired) {
+    controller.display_char('?');  // not paired yet; long-press to pair
   }
 
   // Display boot message is Serial debug port is available

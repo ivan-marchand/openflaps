@@ -54,11 +54,15 @@ Module* module_new(uint8_t eeprom_addr, uint8_t speed, int8_t offset) {
     g_now_us = 0;
     g_limit_switch = LOW;
 
+    bool is_paired = (eeprom_addr != 0xFF);
     Module* m = new Module();
-    uint8_t a = (eeprom_addr == 0xFF) ? 0x10 : eeprom_addr;
+    uint8_t a = is_paired ? eeprom_addr : 0x10;
     m->cfg = ModuleConfig{ a, speed, offset };
     m->controller.setup(speed, offset);
-    m->controller.initialize();          // matches the .ino setup()
+    m->controller.initialize();          // matches the .ino setup(): home either way
+    if (!is_paired) {
+        m->controller.display_char('?'); // matches the .ino: not paired yet
+    }
     return m;
 }
 
@@ -110,6 +114,7 @@ void module_press_button(Module* m, uint32_t duration_ms) {
         case ButtonAction::PAIRING:
             m->cfg.i2c_address = 0x10;
             m->controller.initialize();
+            m->controller.display_char('P');  // matches the .ino: ready to be paired
             break;
         case ButtonAction::NONE:
             break;

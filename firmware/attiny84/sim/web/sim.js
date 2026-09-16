@@ -50,7 +50,9 @@ const log = (m) => { logEl.textContent += m + '\n'; logEl.scrollTop = logEl.scro
 // ---- module lifecycle ----
 let handle = 0;
 function persistEnabled() { return document.getElementById('persist').checked; }
+function unpairedRequested() { return document.getElementById('unpaired').checked; }
 function loadAddr() {
+  if (unpairedRequested()) return 0xFF;
   if (!persistEnabled()) return 0x11;
   const v = parseInt(localStorage.getItem(LS_KEY) ?? '', 10);
   return Number.isFinite(v) ? v : 0x11;
@@ -65,10 +67,13 @@ function syncTargetAddr(a) {
 }
 function createModule() {
   if (handle) api.free(handle);
+  const startedUnpaired = unpairedRequested();
   handle = api.new(loadAddr(), 10, 0);   // speed 10 = the firmware's own default
   lastAddr = api.addr(handle);
   syncTargetAddr(lastAddr);
-  log(`module created @ 0x${lastAddr.toString(16)}`);
+  log(startedUnpaired
+    ? `module created unpaired — homed, showing '?'`
+    : `module created @ 0x${lastAddr.toString(16)}`);
 }
 createModule();
 
@@ -76,6 +81,21 @@ document.getElementById('reset').onclick = () => {
   localStorage.removeItem(LS_KEY);
   createModule();
 };
+
+// Mutually exclusive: an unpaired module has no EEPROM address to remember,
+// so checking one disables (and clears) the other.
+const persistEl = document.getElementById('persist');
+const unpairedEl = document.getElementById('unpaired');
+persistEl.addEventListener('change', () => {
+  if (persistEl.checked) unpairedEl.checked = false;
+  unpairedEl.disabled = persistEl.checked;
+  createModule();
+});
+unpairedEl.addEventListener('change', () => {
+  if (unpairedEl.checked) persistEl.checked = false;
+  persistEl.disabled = unpairedEl.checked;
+  createModule();
+});
 
 // ---- flap view ----
 const flapEl = document.getElementById('flap');
