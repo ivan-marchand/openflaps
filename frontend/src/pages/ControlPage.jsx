@@ -4,18 +4,28 @@ import { api } from '../api'
 import './ControlPage.css'
 
 export function ControlPage() {
-  const [state, setState] = useState({ mode: '...', text: '    ', status: '', module_count: 4, char_per_row: -1 })
+  const [state, setState] = useState({ mode: '...', text: '    ', status: '', module_count: 4, char_per_row: -1, active_layout: '' })
   const [textInput, setTextInput] = useState('')
   const [claudeInput, setClaudeInput] = useState('')
+  const [layouts, setLayouts] = useState([])
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     api.state().then(setState).catch(() => {})
+    api.getLayouts().then(data => setLayouts(data.layouts || [])).catch(() => {})
     const interval = setInterval(() => {
       api.state().then(setState).catch(() => {})
     }, 1000)
     return () => clearInterval(interval)
   }, [])
+
+  function selectLayout(name) {
+    if (busy || !name) return
+    withBusy(() => api.setMode('layout', name).then(r => {
+      if (r.ok) setState(s => ({ ...s, mode: 'layout', active_layout: name, status: r.status }))
+      return r
+    }))
+  }
 
   async function withBusy(fn) {
     setBusy(true)
@@ -82,8 +92,18 @@ export function ControlPage() {
         </div>
 
         <div class="mode-buttons" style="margin-top:14px;">
-          <button class="btn" disabled={busy} onClick={() => withBusy(() => api.setMode('time').then(r => { if(r.ok) setState(s=>({...s, mode:'time', status:r.status})); return r }))}>TIME</button>
-          <button class="btn" disabled={busy} onClick={() => withBusy(() => api.setMode('temp').then(r => { if(r.ok) setState(s=>({...s, mode:'temp', status:r.status})); return r }))}>TEMP</button>
+          <select
+            value={state.mode === 'layout' ? state.active_layout : ''}
+            disabled={busy}
+            onInput={e => selectLayout(e.target.value)}
+          >
+            <option value="" disabled>Layout…</option>
+            {layouts
+              .filter(l => l.required_width <= state.module_count)
+              .map(l => (
+                <option key={l.name} value={l.name}>{l.name}</option>
+              ))}
+          </select>
           <button class="btn" disabled={busy} onClick={() => withBusy(() => api.eightBall().then(r => { if(r.ok) setState(s=>({...s, text:r.text, status:r.status})); return r }))}>8-BALL</button>
           <button class="btn" disabled={busy} onClick={() => withBusy(() => api.home().then(r => { if(r.ok) setState(s=>({...s, status:r.status})); return r }))}>ERASE</button>
         </div>
