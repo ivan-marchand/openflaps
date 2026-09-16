@@ -49,7 +49,7 @@ temperature in Celsius (or `None`).
 |---|---|---|---|
 | `month` | `localtime[1]` (1-12) | right, zero or space | 2 |
 | `day` | `localtime[2]` (1-31) | right, zero or space | 2 |
-| `year` | `localtime[0]`, right-truncated to `width` digits | right, zero or space | 4 |
+| `year` | `localtime[0]`; width must be 2 or 4 (omitted = 4) | right, zero or space | 4 |
 | `hours` | `localtime[3]` (0-23) | right, zero or space | 2 |
 | `hours12` | `localtime[3]` converted to 1-12 | right, zero or space | 2 |
 | `minutes` | `localtime[4]` (0-59) | right, zero or space | 2 |
@@ -65,10 +65,14 @@ still exceed 3 characters), not an enforced runtime limit.
 
 When the natural value is wider than a given `width`, numeric fields keep
 the **rightmost** (least-significant) digits, dropping from the left —
-e.g. `year:02` on 2026 → `"26"`. Text fields (`ampm`, `weekday`) keep the
-**leftmost** characters, dropping from the right, consistent with their
-left alignment — though in practice their fixed vocabularies (`"AM"`,
-`"MON"`, etc.) rarely need this.
+e.g. `year:2` (or `year:02`) on 2026 → `"26"`. Text fields (`ampm`,
+`weekday`) keep the **leftmost** characters, dropping from the right,
+consistent with their left alignment — though in practice their fixed
+vocabularies (`"AM"`, `"MON"`, etc.) rarely need this.
+
+`year` is further restricted to width `2` or `4` only (or omitted, meaning
+4) — other widths (1, 3, 5+) are rejected at validation time, since a
+truncated year outside those two conventional forms isn't meaningful.
 
 ## Rendering
 
@@ -187,7 +191,8 @@ endpoints:
 - **`POST /api/layouts`** → body `{layouts: [{name, template}], active_layout}`,
   replaces the whole catalog in one shot. Validates: every template parses
   via `layout.parse_template()` (including the zero-pad-on-text-field
-  rejection for `ampm`/`weekday`), names are non-empty and unique, at
+  rejection for `ampm`/`weekday`, and the width-must-be-2-or-4 rejection
+  for `year`), names are non-empty and unique, at
   least one layout remains, and `active_layout` (if given) names an entry
   in the posted list. Any violation → `400` with a descriptive error and
   no partial write. On success, recomputes `required_width` for each
@@ -248,7 +253,8 @@ web UI. Manual test plan for implementation:
   a fetch failure shows the dash placeholder first, then stale-value
   retention after one successful fetch.
 - `POST /api/layouts` rejects: unknown field name, malformed `{...}`,
-  zero-pad flag on `ampm`/`weekday`, duplicate names, empty `layouts`.
+  zero-pad flag on `ampm`/`weekday`, a `year` width other than 2 or 4,
+  duplicate names, empty `layouts`.
 - Deleting the active layout falls back correctly and re-renders live.
 - ControlPage dropdown hides a layout whose `required_width` exceeds the
   detected `module_count`.
