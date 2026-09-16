@@ -19,6 +19,8 @@ export function SetupPage() {
   const [maxConcurrent, setMaxConcurrent] = useState('')
   const [charPerRow, setCharPerRow] = useState('')
   const [moduleCount, setModuleCount] = useState(null)
+  const [layoutRows, setLayoutRows] = useState([])
+  const [activeLayout, setActiveLayout] = useState('')
   const [firmwareFile, setFirmwareFile] = useState(null)
   const [status, setStatus] = useState('')
   const [busy, setBusy] = useState(false)
@@ -34,6 +36,10 @@ export function SetupPage() {
     api.getLayout().then(data => {
       setCharPerRow(data.char_per_row > 0 ? String(data.char_per_row) : '')
       setModuleCount(data.module_count ?? null)
+    }).catch(() => {})
+    api.getLayouts().then(data => {
+      setLayoutRows((data.layouts || []).map(l => ({ name: l.name, template: l.template })))
+      setActiveLayout(data.active_layout || '')
     }).catch(() => {})
   }, [])
 
@@ -87,6 +93,34 @@ export function SetupPage() {
     try {
       const r = await api.saveLayout(value)
       setStatus(r.ok ? 'Layout saved.' : r.error || 'Error.')
+    } finally { setBusy(false) }
+  }
+
+  function updateLayoutRow(index, field, value) {
+    setLayoutRows(rows => rows.map((r, i) => i === index ? { ...r, [field]: value } : r))
+  }
+
+  function addLayoutRow() {
+    setLayoutRows(rows => [...rows, { name: '', template: '' }])
+  }
+
+  function removeLayoutRow(index) {
+    setLayoutRows(rows => rows.length > 1 ? rows.filter((_, i) => i !== index) : rows)
+  }
+
+  async function saveLayouts(e) {
+    e.preventDefault()
+    setBusy(true)
+    try {
+      const names = layoutRows.map(r => (r.name || '').trim())
+      const active = names.includes(activeLayout) ? activeLayout : undefined
+      const r = await api.saveLayouts(layoutRows, active)
+      setStatus(r.ok ? 'Layouts saved.' : r.error || 'Error.')
+      if (r.ok) {
+        const data = await api.getLayouts()
+        setLayoutRows((data.layouts || []).map(l => ({ name: l.name, template: l.template })))
+        setActiveLayout(data.active_layout || '')
+      }
     } finally { setBusy(false) }
   }
 
@@ -177,6 +211,39 @@ export function SetupPage() {
             Leave blank for a single row spanning all modules. Set a value to wrap text onto a new physical row of modules after that many characters.
           </div>
           <button class="btn" type="submit" disabled={busy}>SAVE</button>
+        </form>
+      </div>
+
+      <div class="display-card" style="margin-bottom:12px;">
+        <div class="field-label">Layouts</div>
+        <form onSubmit={saveLayouts}>
+          {layoutRows.map((row, i) => (
+            <div class="input-row" style="margin-bottom:8px;" key={i}>
+              <input
+                type="text"
+                placeholder="Name"
+                value={row.name}
+                onInput={e => updateLayoutRow(i, 'name', e.target.value)}
+                style="max-width:120px;"
+              />
+              <input
+                type="text"
+                placeholder="{hours:02}{minutes:02}"
+                value={row.template}
+                onInput={e => updateLayoutRow(i, 'template', e.target.value)}
+              />
+              <button type="button" class="btn" disabled={layoutRows.length <= 1} onClick={() => removeLayoutRow(i)}>DEL</button>
+            </div>
+          ))}
+          <div style="margin-bottom:10px;">
+            <button type="button" class="btn" onClick={addLayoutRow}>+ ADD LAYOUT</button>
+          </div>
+          <div style="margin-bottom:10px;font-size:0.85em;opacity:0.7;">
+            Fields: month, day, year, hours, hours12, minutes, ampm, weekday,
+            temperature_f, temperature_c. Use {'{field}'} for natural width,
+            {'{field:N}'} to space-pad/truncate, {'{field:0N}'} to zero-pad/truncate.
+          </div>
+          <button class="btn" type="submit" disabled={busy || layoutRows.length === 0}>SAVE LAYOUTS</button>
         </form>
       </div>
 
