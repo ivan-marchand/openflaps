@@ -8,7 +8,7 @@ baked into `main.py`. There's no way to combine fields (e.g. date + temp),
 change the format, or add new field types without editing firmware code.
 
 This introduces a small template engine — a placeholder syntax like
-`{month:2}/{day:2}/{year:2} {temperature_f:3}°F` — plus a catalog of
+`{month:02}/{day:02}/{year:2} {temperature_f:3}°F` — plus a catalog of
 user-named, user-edited **layouts** (name + template pairs) that can be
 switched between from the Control page, replacing `MODE_TIME`/`MODE_TEMP`
 with one generic `MODE_LAYOUT`.
@@ -26,11 +26,13 @@ A template is a string mixing literal characters with placeholder tokens:
 Width is optional. A leading `0` in the width digits selects zero-padding;
 otherwise space-padding is used. Examples:
 
-- `"{hours:2}{minutes:2}"` → `"1405"` (24h clock, always 4 chars — the
+- `"{hours:02}{minutes:02}"` → `"1405"` (24h clock, always 4 chars — the
   default layout)
 - `"{hours12}:{minutes:02} {ampm}"` → `"1:05 PM"` (natural-width hour, no
   leading zero)
-- `"{month:2}/{day:2}/{year:2} {temperature_f:3}°F"` → `"09/16/26  72°F"`
+- `"{month:02}/{day:02}/{year:2} {temperature_f:3}°F"` → `"09/16/26  72°F"`
+  (`year:2` needs no leading zero — truncating 2026 to its rightmost 2
+  digits doesn't involve padding at all)
 
 Parsed with `re.compile(r'\{([a-zA-Z_]+)(?::(0?)(\d+))?\}')` into a list of
 literal-text and `(field_name, width, zero_pad)` tokens. Parsing happens
@@ -179,7 +181,7 @@ alongside the existing `char_per_row`:
 {
   "char_per_row": -1,
   "layouts": [
-    {"name": "Clock", "template": "{hours:2}{minutes:2}"}
+    {"name": "Clock", "template": "{hours:02}{minutes:02}"}
   ],
   "active_layout": "Clock"
 }
