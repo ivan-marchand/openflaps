@@ -5,10 +5,11 @@
 #   ./firmware/pico/deploy.sh                 # USB (default) -- requires mpremote,
 #                                              #   Pico connected and running MicroPython
 #                                              #   (not bootloader mode)
-#   ./firmware/pico/deploy.sh --ota <host>     # WiFi -- POSTs a zip to the Pico's
+#   ./firmware/pico/deploy.sh --ota [host]     # WiFi -- POSTs a zip to the Pico's
 #                                              #   POST /api/firmware/update endpoint
-#                                              #   (requires curl and zip). <host> is
-#                                              #   the Pico's IP or hostname.
+#                                              #   (requires curl and zip). host is
+#                                              #   the Pico's IP or hostname; defaults
+#                                              #   to openflaps.local if omitted.
 
 set -e
 
@@ -60,11 +61,7 @@ deploy_usb() {
 }
 
 deploy_ota() {
-  HOST="$1"
-  if [ -z "$HOST" ]; then
-    echo "Error: --ota requires a host, e.g. ./deploy.sh --ota 192.168.1.42"
-    exit 1
-  fi
+  HOST="${1:-openflaps.local}"
   for cmd in curl zip; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
       echo "Error: $cmd is required for --ota deploys but was not found."
@@ -84,8 +81,15 @@ deploy_ota() {
   MANIFEST_JSON="${MANIFEST_JSON%,}]"
   echo "$MANIFEST_JSON" > "$MANIFEST_DIR/manifest.json"
 
-  (cd "$PICO_DIR" && zip -q -r "$ZIP" "${FILES[@]}")
-  zip -q -j "$ZIP" "$MANIFEST_DIR/manifest.json"
+  # -0 (store, no compression): deflate decompression on the device needs a
+  # 32K window buffer no matter how carefully everything else is streamed,
+  # and the Pico W's fragmented heap can't reliably spare that. Stored
+  # entries skip deflate.DeflateIO entirely, so there's no large allocation
+  # of any kind -- worth the bigger upload (the file set here is still well
+  # under FIRMWARE_UPDATE_MAX_BYTES) for updates that work every time
+  # instead of only when the heap happens to be unfragmented enough.
+  (cd "$PICO_DIR" && zip -q -0 -r "$ZIP" "${FILES[@]}")
+  zip -q -0 -j "$ZIP" "$MANIFEST_DIR/manifest.json"
 
   echo "Uploading to http://$HOST/api/firmware/update ..."
   RESPONSE=$(curl -sS -X POST \
@@ -118,7 +122,7 @@ case "$1" in
     ;;
   *)
     echo "Error: unknown argument '$1'"
-    echo "Usage: ./deploy.sh [--ota <host>]"
+    echo "Usage: ./deploy.sh [--ota [host]]"
     exit 1
     ;;
 esac
