@@ -45,18 +45,27 @@ Implemented in a new module `firmware/pico/layout.py` (parallel to
 `time.localtime()` tuple and hands it in, along with the last known outdoor
 temperature in Celsius (or `None`).
 
-| Field | Source | Alignment when padded | Max natural width* |
-|---|---|---|---|
-| `month` | `localtime[1]` (1-12) | right, zero or space | 2 |
-| `day` | `localtime[2]` (1-31) | right, zero or space | 2 |
-| `year` | `localtime[0]`; width must be 2 or 4 (omitted = 4) | right, zero or space | 4 |
-| `hours` | `localtime[3]` (0-23) | right, zero or space | 2 |
-| `hours12` | `localtime[3]` converted to 1-12 | right, zero or space | 2 |
-| `minutes` | `localtime[4]` (0-59) | right, zero or space | 2 |
-| `ampm` | `localtime[3]` → `"AM"`/`"PM"` | left, space only (zero-pad flag rejected at validation) | 2 |
-| `weekday` | `localtime[6]` (0=Mon) → `MON`..`SUN` | left, space only (zero-pad flag rejected at validation) | 3 |
-| `temperature_f` | outdoor temp, converted from °C | right, zero or space | 3 |
-| `temperature_c` | outdoor temp, raw | right, zero or space | 3 |
+| Field | Source | Alignment when padded | Min explicit width† | Max natural width* |
+|---|---|---|---|---|
+| `month` | `localtime[1]` (1-12) | right, zero or space | 2 | 2 |
+| `day` | `localtime[2]` (1-31) | right, zero or space | 2 | 2 |
+| `year` | `localtime[0]`; width must be 2 or 4 (omitted = 4) | right, zero or space | 2 (only 2 or 4 valid) | 4 |
+| `hours` | `localtime[3]` (0-23) | right, zero or space | 2 | 2 |
+| `hours12` | `localtime[3]` converted to 1-12 | right, zero or space | 2 | 2 |
+| `minutes` | `localtime[4]` (0-59) | right, zero or space | 2 | 2 |
+| `ampm` | `localtime[3]` → `"AM"`/`"PM"` | left, space only (zero-pad flag rejected at validation) | 2 | 2 |
+| `weekday` | `localtime[6]` (0=Mon) → `MON`..`SUN` | left, space only (zero-pad flag rejected at validation) | 3 | 3 |
+| `temperature_f` | outdoor temp, converted from °C | right, zero or space | 2 | 3 |
+| `temperature_c` | outdoor temp, raw | right, zero or space | 2 | 3 |
+
+† **Min explicit width** only applies when a width is given at all —
+`{field}` with no width always renders naturally (e.g. `hours12` still
+renders as 1 or 2 characters unpadded) regardless of the field's minimum.
+A given width below the minimum is rejected at validation time (same
+mechanism as `year`'s 2-or-4 restriction) because it would truncate a
+two-digit (or, for `weekday`, three-letter) value down to something
+ambiguous or meaningless — e.g. `hours:1` turning `"23"` into `"3"`,
+indistinguishable from `"03"`.
 
 \* "Max natural width" is the assumed upper bound used only for
 `required_width()` (see Sizing below) when a field has no explicit width —
@@ -191,8 +200,9 @@ endpoints:
 - **`POST /api/layouts`** → body `{layouts: [{name, template}], active_layout}`,
   replaces the whole catalog in one shot. Validates: every template parses
   via `layout.parse_template()` (including the zero-pad-on-text-field
-  rejection for `ampm`/`weekday`, and the width-must-be-2-or-4 rejection
-  for `year`), names are non-empty and unique, at
+  rejection for `ampm`/`weekday`, the per-field min-explicit-width
+  rejection from the Field registry table, and the width-must-be-2-or-4
+  rejection for `year`), names are non-empty and unique, at
   least one layout remains, and `active_layout` (if given) names an entry
   in the posted list. Any violation → `400` with a descriptive error and
   no partial write. On success, recomputes `required_width` for each
@@ -253,7 +263,8 @@ web UI. Manual test plan for implementation:
   a fetch failure shows the dash placeholder first, then stale-value
   retention after one successful fetch.
 - `POST /api/layouts` rejects: unknown field name, malformed `{...}`,
-  zero-pad flag on `ampm`/`weekday`, a `year` width other than 2 or 4,
+  zero-pad flag on `ampm`/`weekday`, a width below a field's minimum
+  (e.g. `weekday:2`, `hours:1`), a `year` width other than 2 or 4,
   duplicate names, empty `layouts`.
 - Deleting the active layout falls back correctly and re-renders live.
 - ControlPage dropdown hides a layout whose `required_width` exceeds the
