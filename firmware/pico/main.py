@@ -1,6 +1,7 @@
 from time import sleep
 import time
 import urandom
+import gc
 from machine import I2C, Pin
 import network
 import ntptime
@@ -276,6 +277,8 @@ def parse_json_body(req):
 # ----------------------------
 AP_SSID = "OpenFlap-Setup"
 AP_PASSWORD = "openflap1"
+
+MDNS_HOSTNAME = "openflaps"  # reachable at http://openflaps.local/ once on WiFi
 
 def render_template(filename, **kwargs):
     with open(filename, "r") as f:
@@ -711,6 +714,11 @@ def connect_wifi():
         start_ap_provisioning()  # blocks until saved + resets
         return None, None
 
+    try:
+        network.hostname(MDNS_HOSTNAME)  # advertised to the router via DHCP; best-effort
+    except Exception:
+        pass
+
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
     wlan.connect(ssid, password)
@@ -822,8 +830,47 @@ def _zip_u16(b, o):
 def _zip_u32(b, o):
     return b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)
 
+_ZIP_CHUNK_SIZE = 512  # size of each streamed read/write -- never buffer a whole entry
+
+class _BoundedReader:
+    # Streams up to `n` bytes of `f` for one zip entry, without ever
+    # buffering the whole entry in RAM -- the Pico W's heap is too tight for
+    # that once files get past a few KB (see CLAUDE.md's OTA section).
+    # skip_rest() discards whatever the caller didn't read, so
+    # _scan_zip_entries can resume at the next entry's header regardless of
+    # how much (if any) of this one was actually consumed.
+    def __init__(self, f, n, name):
+        self.f = f
+        self.remaining = n
+        self.name = name
+
+    def read(self, n=-1):
+        if self.remaining <= 0:
+            return b""
+        # A caller asking for "everything" (n<0, e.g. deflate.DeflateIO
+        # pulling compressed input internally) must still only get a bounded
+        # chunk -- otherwise it silently reintroduces a single large
+        # allocation sized to the whole entry, exactly what this class
+        # exists to avoid. A capped read is a valid response to an
+        # unbounded read() request; the caller just asks again for more.
+        if n < 0 or n > _ZIP_CHUNK_SIZE:
+            n = _ZIP_CHUNK_SIZE
+        if n > self.remaining:
+            n = self.remaining
+        data = self.f.read(n)
+        if not data:
+            raise ValueError("Truncated zip data for {}".format(self.name))
+        self.remaining -= len(data)
+        return data
+
+    def skip_rest(self):
+        while self.remaining > 0:
+            self.read(min(self.remaining, _ZIP_CHUNK_SIZE))
+
 def _scan_zip_entries(zf):
-    # Yields (name, method, uncomp_size, data) per non-directory entry.
+    # Yields (name, method, uncomp_size, reader) per non-directory entry.
+    # `reader` streams this entry's raw (still compressed) bytes directly
+    # from `zf` on demand -- nothing is read into RAM upfront.
     while True:
         sig = zf.read(4)
         if sig != ZIP_LOCAL_FILE_SIG:
@@ -849,26 +896,60 @@ def _scan_zip_entries(zf):
         if extra_len:
             zf.read(extra_len)
 
-        data = zf.read(comp_size)
-        if len(data) < comp_size:
-            raise ValueError("Truncated zip data for {}".format(name))
-
+        reader = _BoundedReader(zf, comp_size, name)
         if name.endswith("/"):
+            reader.skip_rest()
             continue
-        yield name, method, uncomp_size, data
 
-def _zip_inflate(method, data, uncomp_size, name):
+        yield name, method, uncomp_size, reader
+        reader.skip_rest()  # in case the caller didn't consume all of it
+
+def _iter_inflate(method, reader, uncomp_size, name):
+    # Yields decompressed chunks for one zip entry, streaming from `reader`
+    # instead of materializing the whole entry (compressed or decompressed)
+    # in RAM at once -- important on a device this memory-constrained.
+    total = 0
     if method == 0:
-        payload = data
+        while True:
+            chunk = reader.read(_ZIP_CHUNK_SIZE)
+            if not chunk:
+                break
+            total += len(chunk)
+            yield chunk
     elif method == 8:
         import deflate
         import io
-        payload = deflate.DeflateIO(io.BytesIO(data), deflate.RAW).read()
+        # deflate.DeflateIO requires its source to implement MicroPython's
+        # native C-level stream protocol (checked via mp_get_stream_raise on
+        # first read, which calls the source's C read function pointer
+        # directly) -- a pure-Python object, however it implements
+        # .read(n), doesn't qualify and fails with
+        # OSError("stream operation not supported"). io.BytesIO does
+        # qualify, so the entry's *compressed* bytes (comp_size -- smaller
+        # than uncomp_size, often much smaller for compressible files) are
+        # buffered there via `reader`; only the larger decompressed output
+        # is streamed out in chunks below.
+        compressed = bytearray()
+        while True:
+            chunk = reader.read(_ZIP_CHUNK_SIZE)
+            if not chunk:
+                break
+            compressed.extend(chunk)
+        # wbits=15 (32K window) matches what `zip` actually uses; RAW's
+        # header-less format otherwise defaults to an 8 (256-byte) window,
+        # which fails with OSError EINVAL on any back-reference further
+        # back than that -- i.e. on any file past a couple hundred bytes.
+        d = deflate.DeflateIO(io.BytesIO(compressed), deflate.RAW, 15)
+        while True:
+            chunk = d.read(_ZIP_CHUNK_SIZE)
+            if not chunk:
+                break
+            total += len(chunk)
+            yield chunk
     else:
         raise ValueError("Unsupported compression method for {}".format(name))
-    if len(payload) != uncomp_size:
+    if total != uncomp_size:
         raise ValueError("Size mismatch extracting {}".format(name))
-    return payload
 
 def _sanitize_zip_name(name):
     # Guards against a manifest/zip trying to write outside the intended
@@ -878,7 +959,7 @@ def _sanitize_zip_name(name):
         raise ValueError("Unsafe path in firmware package: {}".format(name))
     return name
 
-def _firmware_write_file(path, data):
+def _firmware_write_file(path, chunks):
     if "/" in path:
         directory = path.rsplit("/", 1)[0]
         try:
@@ -887,7 +968,8 @@ def _firmware_write_file(path, data):
         except OSError:
             pass  # already exists
     with open(path, "wb") as f:
-        f.write(data)
+        for chunk in chunks:
+            f.write(chunk)
 
 def _remove_quietly(path):
     try:
@@ -909,14 +991,17 @@ def save_firmware_manifest(files):
 
 def unpack_firmware_zip(zip_path):
     # Pass 1: find and parse manifest.json, and note every entry name present
-    # in the zip, without writing anything yet.
+    # in the zip. Non-manifest entries are never read into RAM here --
+    # _scan_zip_entries streams each entry on demand and skips whatever this
+    # pass doesn't consume once the next entry is requested.
     manifest_files = None
     zip_entries = set()
     with open(zip_path, "rb") as zf:
-        for name, method, uncomp_size, data in _scan_zip_entries(zf):
+        for name, method, uncomp_size, reader in _scan_zip_entries(zf):
             zip_entries.add(name)
             if name == FIRMWARE_MANIFEST_ENTRY:
-                manifest_files = ujson.loads(_zip_inflate(method, data, uncomp_size, name))
+                manifest_json = b"".join(_iter_inflate(method, reader, uncomp_size, name))
+                manifest_files = ujson.loads(manifest_json)
 
     if not isinstance(manifest_files, list):
         raise ValueError("Zip is missing a valid {}".format(FIRMWARE_MANIFEST_ENTRY))
@@ -928,18 +1013,20 @@ def unpack_firmware_zip(zip_path):
     if missing:
         raise ValueError("Zip is missing file(s) listed in manifest: {}".format(", ".join(missing)))
 
-    # Pass 2: only now write anything, one file at a time straight to flash
-    # (not atomic across files -- if a later entry fails, files already
-    # written from earlier entries stay updated).
+    # Pass 2: only now write anything, one file at a time straight to flash,
+    # streaming each entry's decompressed bytes directly to its destination
+    # file rather than holding the whole thing in RAM (not atomic across
+    # files -- if a later entry fails, files already written from earlier
+    # entries stay updated).
     wanted = set(manifest_files)
     extracted = []
     with open(zip_path, "rb") as zf:
-        for name, method, uncomp_size, data in _scan_zip_entries(zf):
+        for name, method, uncomp_size, reader in _scan_zip_entries(zf):
             if name not in wanted:
                 continue
-            payload = _zip_inflate(method, data, uncomp_size, name)
-            _firmware_write_file(name, payload)
+            _firmware_write_file(name, _iter_inflate(method, reader, uncomp_size, name))
             extracted.append(name)
+            gc.collect()  # reclaim this file's chunk/window buffers before the next one
 
     # Remove files that were part of the previous manifest but aren't in this
     # one -- only after every new file has landed successfully.
