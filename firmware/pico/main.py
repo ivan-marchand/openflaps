@@ -9,6 +9,7 @@ import socket
 import sys
 import ujson
 import tz
+import layout
 
 
 # ----------------------------
@@ -22,6 +23,8 @@ LAYOUT_CONFIG_FILE = "layout_config.json"
 
 DEFAULT_MAX_CONCURRENT_MODULES = 4  # matches display width -> no limiting by default
 DEFAULT_CHAR_PER_ROW = -1  # -1 = single row (all modules in one line)
+DEFAULT_LAYOUTS = [{"name": "Clock", "template": "{hours:02}{minutes:02}"}]
+DEFAULT_ACTIVE_LAYOUT = "Clock"
 
 # I2C
 i2c = I2C(0, freq=100000, scl=Pin(1), sda=Pin(0))
@@ -128,23 +131,99 @@ def save_max_concurrent(value):
         print("Failed to save energy config:", e)
         return False
 
-def load_char_per_row():
+def _load_layout_config():
     try:
         with open(LAYOUT_CONFIG_FILE, "r") as f:
-            return int(ujson.load(f).get("char_per_row", DEFAULT_CHAR_PER_ROW))
+            return ujson.load(f)
     except:
+        return {}
+
+def _save_layout_config(data):
+    with open(LAYOUT_CONFIG_FILE, "w") as f:
+        ujson.dump(data, f)
+
+def load_char_per_row():
+    try:
+        return int(_load_layout_config().get("char_per_row", DEFAULT_CHAR_PER_ROW))
+    except (TypeError, ValueError):
         return DEFAULT_CHAR_PER_ROW
 
 def save_char_per_row(value):
     global char_per_row
     try:
-        with open(LAYOUT_CONFIG_FILE, "w") as f:
-            ujson.dump({"char_per_row": value}, f)
+        data = _load_layout_config()
+        data["char_per_row"] = value
+        _save_layout_config(data)
         char_per_row = value
         return True
     except Exception as e:
         print("Failed to save layout config:", e)
         return False
+
+def load_layouts():
+    data = _load_layout_config()
+    raw_layouts = data.get("layouts") or DEFAULT_LAYOUTS
+    layouts = [
+        entry for entry in raw_layouts
+        if isinstance(entry, dict)
+        and isinstance(entry.get("name"), str) and entry["name"]
+        and isinstance(entry.get("template"), str)
+    ]
+    if not layouts:
+        layouts = DEFAULT_LAYOUTS
+    names = [entry["name"] for entry in layouts]
+    active = data.get("active_layout")
+    if active not in names:
+        active = names[0]
+    return layouts, active
+
+def save_layouts(layouts, active):
+    global current_layouts, active_layout_name
+    try:
+        data = _load_layout_config()
+        data["layouts"] = layouts
+        data["active_layout"] = active
+        _save_layout_config(data)
+        current_layouts = layouts
+        active_layout_name = active
+        _rebuild_layout_cache()
+        return True
+    except Exception as e:
+        print("Failed to save layout config:", e)
+        return False
+
+def save_active_layout(name):
+    global active_layout_name
+    try:
+        data = _load_layout_config()
+        data["active_layout"] = name
+        _save_layout_config(data)
+        active_layout_name = name
+        return True
+    except Exception as e:
+        print("Failed to save layout config:", e)
+        return False
+
+def _rebuild_layout_cache():
+    global layout_tokens_cache, layout_required_width_cache
+    layout_tokens_cache = {}
+    layout_required_width_cache = {}
+    for entry in current_layouts:
+        try:
+            tokens = layout.parse_template(entry["template"])
+        except ValueError as e:
+            print("Skipping invalid layout '{}': {}".format(entry.get("name"), e))
+            continue
+        layout_tokens_cache[entry["name"]] = tokens
+        layout_required_width_cache[entry["name"]] = layout.required_width(tokens)
+    if not layout_tokens_cache:
+        # Every persisted layout failed to parse -- fall back to the
+        # always-valid default so the device still boots with something
+        # rather than an empty cache.
+        fallback = DEFAULT_LAYOUTS[0]
+        tokens = layout.parse_template(fallback["template"])
+        layout_tokens_cache[fallback["name"]] = tokens
+        layout_required_width_cache[fallback["name"]] = layout.required_width(tokens)
 
 # ----------------------------
 # HTTP helpers (needed by both provisioning and main server)
@@ -446,22 +525,6 @@ def get_outdoor_temp():
         print("Weather error:", e)
         return None
 
-def display_web_temp(has_previous=False):
-    temp = get_outdoor_temp()
-    if temp is None:
-        if not has_previous:
-            # First fetch in this session failed — show ERR so screen isn't blank
-            print_string("ERR ")
-            return "ERR "
-        # Already showed a temperature — keep it and retry next interval
-        return None
-
-    temp = 32 + temp * 9/5
-    t = int(round(temp))
-    txt = "{:2d}°F".format(t)[:4]
-    print_string(txt)
-    return txt
-
 # ----------------------------
 # I2C helpers
 # ----------------------------
@@ -561,12 +624,6 @@ def print_string(s: str, keep_energized=False):
         if in_flight:
             time.sleep_ms(20)
             in_flight = [a for a in in_flight if is_module_busy(a)]
-
-def time_keep_energized(minutes):
-    # Only minutes-units is held energized (it changes every update); it
-    # still rests once per 10 minutes, on '9' rather than '0' since that's
-    # the cheaper point to re-home from (see CLAUDE.md for the math).
-    return [False, False, False, minutes % 10 != 9]
 
 def home_all():
     global last_displayed_chars
@@ -764,15 +821,36 @@ def start_server():
 # ----------------------------
 # App state
 # ----------------------------
-MODE_TIME = "time"
-MODE_TEMP = "temp"
+MODE_LAYOUT = "layout"
 MODE_TEXT = "text"
 
-mode = MODE_TIME
+mode = MODE_LAYOUT
 last_text = ""
 status_line = "Ready."
 minutes = None
 last_temp_update = 0
+last_temp_c = None
+
+current_layouts = DEFAULT_LAYOUTS
+active_layout_name = DEFAULT_ACTIVE_LAYOUT
+layout_tokens_cache = {}
+layout_required_width_cache = {}
+
+def render_active_layout():
+    global last_text, minutes, last_temp_update, last_temp_c
+    lt = time.localtime(time.time() + tz.get_offset(current_timezone))
+    minutes = lt[4]
+    tokens = layout_tokens_cache[active_layout_name]
+    temp_c = last_temp_c
+    if layout.uses_temperature(tokens) and time.time() - last_temp_update >= TEMP_UPDATE_INTERVAL:
+        last_temp_update = time.time()
+        fetched = get_outdoor_temp()
+        if fetched is not None:
+            last_temp_c = fetched
+            temp_c = fetched
+    text, keep_energized = layout.render(tokens, lt, temp_c)
+    last_text = text
+    print_string(text, keep_energized=keep_energized)
 
 # Onboard LED status tracking (see update_led()): i2c_ok is re-checked
 # periodically in the background since modules can be plugged in/out or
@@ -809,6 +887,8 @@ current_timezone = load_timezone()
 api_key = load_api_key()
 max_concurrent_modules = load_max_concurrent()
 char_per_row = load_char_per_row()
+current_layouts, active_layout_name = load_layouts()
+_rebuild_layout_cache()
 
 server = start_server()
 
@@ -1131,6 +1211,7 @@ def handle_request(conn):
                 "status": status_line,
                 "module_count": len(get_module_addresses()),
                 "char_per_row": char_per_row,
+                "active_layout": active_layout_name,
             })
 
         elif route == "/api/text" and method == "POST":
@@ -1148,19 +1229,17 @@ def handle_request(conn):
         elif route == "/api/mode" and method == "POST":
             data = parse_json_body(req)
             m = data.get("mode", "")
-            if m in (MODE_TIME, MODE_TEMP):
-                mode = m
-                status_line = "Switched to {}".format(mode)
-                if mode == MODE_TIME:
-                    t = time.localtime(time.time() + tz.get_offset(current_timezone))
-                    minutes = t[4]
-                    last_text = "{:02d}{:02d}".format(t[3], t[4])
-                    # Keep coils energized: this mode updates every minute, so
-                    # re-homing before each update would be slow, noisy, and wear the switch.
-                    # (Minutes-units still gets a periodic rest -- see time_keep_energized().)
-                    print_string(last_text, keep_energized=time_keep_energized(minutes))
-                elif mode == MODE_TEMP:
-                    last_temp_update = 0
+            if m == MODE_LAYOUT:
+                requested = data.get("layout")
+                if requested is not None and requested not in layout_tokens_cache:
+                    http_send_json(conn, {"ok": False, "error": "Unknown layout."}, code="400 Bad Request")
+                    return
+                if requested is not None:
+                    save_active_layout(requested)
+                mode = MODE_LAYOUT
+                last_temp_update = 0
+                render_active_layout()
+                status_line = "Switched to {}".format(active_layout_name)
                 http_send_json(conn, {"ok": True, "status": status_line})
             else:
                 http_send_json(conn, {"ok": False, "error": "Unknown mode."}, code="400 Bad Request")
@@ -1311,6 +1390,67 @@ def handle_request(conn):
                 save_char_per_row(value)
                 http_send_json(conn, {"ok": True})
 
+        elif route == "/api/layouts" and method == "GET":
+            http_send_json(conn, {
+                "layouts": [
+                    {
+                        "name": entry["name"],
+                        "template": entry["template"],
+                        "required_width": layout_required_width_cache[entry["name"]],
+                    }
+                    for entry in current_layouts
+                ],
+                "active_layout": active_layout_name,
+            })
+
+        elif route == "/api/layouts" and method == "POST":
+            data = parse_json_body(req)
+            new_layouts = data.get("layouts")
+            new_active = data.get("active_layout")
+
+            if not isinstance(new_layouts, list) or len(new_layouts) == 0:
+                http_send_json(conn, {"ok": False, "error": "layouts must be a non-empty list."}, code="400 Bad Request")
+                return
+
+            names = []
+            clean_layouts = []
+            for entry in new_layouts:
+                name = entry.get("name") if isinstance(entry, dict) else None
+                name = name.strip() if isinstance(name, str) else ""
+                template = entry.get("template") if isinstance(entry, dict) else None
+                if not isinstance(template, str):
+                    template = ""
+                if not name:
+                    http_send_json(conn, {"ok": False, "error": "Layout name cannot be empty."}, code="400 Bad Request")
+                    return
+                if name in names:
+                    http_send_json(conn, {"ok": False, "error": "Duplicate layout name: {}".format(name)}, code="400 Bad Request")
+                    return
+                try:
+                    layout.parse_template(template)
+                except ValueError as e:
+                    http_send_json(conn, {"ok": False, "error": "Layout '{}': {}".format(name, e)}, code="400 Bad Request")
+                    return
+                names.append(name)
+                clean_layouts.append({"name": name, "template": template})
+
+            if new_active is not None and new_active not in names:
+                http_send_json(conn, {"ok": False, "error": "active_layout must name one of the posted layouts."}, code="400 Bad Request")
+                return
+
+            if new_active is not None:
+                active = new_active
+            elif active_layout_name in names:
+                active = active_layout_name
+            else:
+                active = names[0]
+
+            save_layouts(clean_layouts, active)
+            if mode == MODE_LAYOUT:
+                render_active_layout()
+
+            http_send_json(conn, {"ok": True})
+
         elif route.startswith("/assets/"):
             filename = route.lstrip("/")
             http_send_file(conn, filename)
@@ -1369,23 +1509,18 @@ def update_led():
 
 
 def tick():
-    global minutes, last_text, last_temp_update, next_ntp_sync
+    global next_ntp_sync
     now = time.time()
 
-    if mode == MODE_TIME:
-        actual_time = now + tz.get_offset(current_timezone)
-        current_time = time.localtime(actual_time)
-        hours = current_time[3]
-        current_minutes = current_time[4]
-        if current_minutes != minutes:
-            minutes = current_minutes
-            last_text = "{:02d}{:02d}".format(hours, minutes)
-            print_string(last_text, keep_energized=time_keep_energized(minutes))
-
-    elif mode == MODE_TEMP:
-        if now - last_temp_update >= TEMP_UPDATE_INTERVAL:
-            last_temp_update = now
-            last_text = display_web_temp(last_temp_update > 0) or last_text
+    if mode == MODE_LAYOUT:
+        tokens = layout_tokens_cache[active_layout_name]
+        lt = time.localtime(now + tz.get_offset(current_timezone))
+        current_minutes = lt[4]
+        needs_render = current_minutes != minutes
+        if layout.uses_temperature(tokens) and now - last_temp_update >= TEMP_UPDATE_INTERVAL:
+            needs_render = True
+        if needs_render:
+            render_active_layout()
 
     # Periodic NTP re-sync
     if now >= next_ntp_sync:

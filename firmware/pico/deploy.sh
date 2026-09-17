@@ -14,7 +14,7 @@
 set -e
 
 PICO_DIR="$(cd "$(dirname "$0")" && pwd)"
-FILES=(main.py tz.py index.html setup.html assets/index.js assets/index.css)
+FILES=(main.py tz.py layout.py index.html setup.html assets/index.js assets/index.css)
 
 deploy_usb() {
   # Find the Pico's serial port (usbmodem on macOS, ttyACM on Linux)
@@ -40,6 +40,9 @@ deploy_usb() {
 
   echo "Uploading tz.py..."
   mpremote connect "$PORT" cp "$PICO_DIR/tz.py" :tz.py
+
+  echo "Uploading layout.py..."
+  mpremote connect "$PORT" cp "$PICO_DIR/layout.py" :layout.py
 
   echo "Uploading index.html..."
   mpremote connect "$PORT" cp "$PICO_DIR/index.html" :index.html

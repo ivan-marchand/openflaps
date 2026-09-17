@@ -41,6 +41,7 @@ Requires `mpremote` (`pip install mpremote`).
 2. Upload the following files to the Pico's root:
    - `firmware/pico/main.py`
    - `firmware/pico/tz.py`
+   - `firmware/pico/layout.py`
    - `firmware/pico/index.html`
    - `firmware/pico/setup.html`
    - `firmware/pico/assets/index.js`

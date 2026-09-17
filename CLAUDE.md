@@ -56,7 +56,7 @@ Or just run `./firmware/pico/deploy.sh` which builds, copies, and uploads everyt
 |---|---|
 | `api.state()` | `GET /api/state` |
 | `api.setText(text)` | `POST /api/text` |
-| `api.setMode(mode)` | `POST /api/mode` |
+| `api.setMode(mode, layoutName)` | `POST /api/mode` |
 | `api.eightBall()` | `POST /api/8ball` |
 | `api.home()` | `POST /api/home` |
 | `api.askClaude(prompt)` | `POST /api/claude` |
@@ -73,10 +73,13 @@ Or just run `./firmware/pico/deploy.sh` which builds, copies, and uploads everyt
 | `api.saveEnergy(maxConcurrent)` | `POST /api/setup/energy` |
 | `api.getLayout()` | `GET /api/layout` |
 | `api.saveLayout(charPerRow)` | `POST /api/setup/layout` |
+| `api.getLayouts()` | `GET /api/layouts` |
+| `api.saveLayouts(layouts, activeLayout)` | `POST /api/layouts` |
 
 ## Key Files
 
 - `firmware/pico/main.py` — Main Pico controller (HTTP server, I2C master, display logic)
+- `firmware/pico/layout.py` — Layout template engine: field registry, `parse_template()`, `render()`, `required_width()`, `uses_temperature()` (see Display Modes below)
 - `firmware/pico/tz.py` — Timezone table with DST rules (~35 zones), `get_offset()`, `zone_list()`
 - `firmware/pico/deploy.sh` — Deploys all firmware files to Pico via `mpremote` (USB) or `POST /api/firmware/update` (`--ota [host]`)
 - `firmware/pico/index.html` — Built Preact SPA (served to browser)
@@ -90,7 +93,7 @@ Config is stored in JSON files on Pico flash — all are gitignored:
 - `api_config.json` — `{"key": "sk-ant-..."}` — Claude API key
 - `timezone_config.json` — `{"zone": "America/New_York"}` — IANA timezone name
 - `energy_config.json` — `{"max_concurrent": 4}` — max modules allowed to move simultaneously
-- `layout_config.json` — `{"char_per_row": -1}` — modules per physical row; `-1` means a single row spanning every detected module
+- `layout_config.json` — `{"char_per_row": -1, "layouts": [{"name": "Clock", "template": "{hours:02}{minutes:02}"}], "active_layout": "Clock"}` — `char_per_row`: modules per physical row (`-1` = single row spanning every detected module); `layouts`: the named template catalog (always ≥1 entry); `active_layout`: which one is currently live (always names an entry in `layouts`)
 
 Constants in `main.py`:
 - `BASE_ADDR = 0x11` — First I2C device address (0x10 is reserved for pairing mode). Modules are wired right-to-left, so `BASE_ADDR` is the rightmost character and address increases leftward.
@@ -118,9 +121,59 @@ the built-in responder already held) rather than just being redundant.
 
 | Mode constant | Value | Behaviour |
 |---|---|---|
-| `MODE_TIME` | `"time"` | Shows `HH:MM`, updated every minute |
-| `MODE_TEMP` | `"temp"` | Shows outdoor °F via open-meteo, updated every 60 s |
+| `MODE_LAYOUT` | `"layout"` | Renders the active named layout's template, auto-updating (time/date fields every minute, temperature on `TEMP_UPDATE_INTERVAL`) |
 | `MODE_TEXT` | `"text"` | Shows user text or Claude response, static |
+
+`MODE_LAYOUT` replaced the old fixed `MODE_TIME`/`MODE_TEMP` modes with a
+user-configurable template system. A **layout** is a `{name, template}`
+pair (SetupPage's "Layouts" card manages the catalog; ControlPage's
+dropdown picks which one is live — see `layout_config.json` above).
+`main.py`'s `render_active_layout()` computes the current
+timezone-adjusted `time.localtime()` tuple and the last-known outdoor
+temperature, then calls `layout.render()` to produce the display string
+and per-character energize mask; `tick()` calls it whenever the minute
+changes or (for a template using a temperature field) the refresh
+interval elapses.
+
+**Template syntax** (`firmware/pico/layout.py`): a template mixes literal
+characters with `{field}` placeholders.
+- `{field}` — natural width, no padding (e.g. `hours12` renders `"1"` or
+  `"12"`).
+- `{field:N}` — space-padded/truncated to width `N`.
+- `{field:0N}` — zero-padded/truncated to width `N` (leading `0` in the
+  width digits selects zero-padding).
+
+Numeric fields truncate by keeping the rightmost digits when narrower
+than the natural value; text fields keep the leftmost characters.
+
+| Field | Meaning | Min explicit width | Max natural width |
+|---|---|---|---|
+| `month` | 1-12 | 2 | 2 |
+| `day` | 1-31 | 2 | 2 |
+| `year` | full year; width must be `2` or `4` (omitted = 4) | 2 | 4 |
+| `hours` | 0-23 | 2 | 2 |
+| `hours12` | 1-12 | 2 | 2 |
+| `minutes` | 0-59 | 2 | 2 |
+| `ampm` | `"AM"`/`"PM"` (no zero-pad) | 2 | 2 |
+| `weekday` | `MON`..`SUN` (no zero-pad) | 3 | 3 |
+| `temperature_f` | outdoor °F | 2 | 3 |
+| `temperature_c` | outdoor °C | 2 | 3 |
+
+A width below a field's minimum, a zero-pad flag on `ampm`/`weekday`, or
+a `year` width other than 2/4 are all rejected at save time (`POST
+/api/layouts`) with a descriptive error.
+
+`layout.required_width(tokens)` computes the max characters a template
+could render to (explicit widths, or a field's max-natural-width when
+omitted); `GET /api/layouts` returns it per layout, and ControlPage's
+dropdown hides any layout whose `required_width` exceeds the detected
+`module_count` — display-only filtering, not enforced at save time.
+
+If the outdoor temperature has never been successfully fetched, a
+temperature field renders as dashes filling its width (or `"---"` if no
+width given) instead of blocking the rest of the template; once a
+reading succeeds, a later failed refetch just keeps showing the last
+known value rather than reverting to dashes.
 
 Display width is auto-detected: `get_module_addresses()` walks `i2c.scan()` results from `BASE_ADDR` upward to find the contiguous module count (also returned as `module_count` by `GET /api/state` / `GET /api/layout`, and used to size the frontend's text input and Claude's target length — nothing is hardcoded to 4 characters anymore). `print_string(s)` left-aligns/hard-wraps `s` to that count, then reverses each row before assigning to addresses in increasing order, since modules are wired right-to-left within a row (`BASE_ADDR` is the rightmost character of the first row). Modules are dispatched leftmost (highest address) first, like natural left-to-right writing.
 
@@ -131,8 +184,8 @@ Display width is auto-detected: `get_module_addresses()` walks `i2c.scan()` resu
 ## Energy Saving
 
 - By default, each ATtiny84 de-energizes its stepper coils (`PowerManagedStepper.deactivate()`) as soon as it reaches its target position or finishes homing, so idle modules draw no holding current. Because the 28BYJ-48 has no absolute position sensor, de-energized coils mean the rotor can drift under load — so the next `D` (display character) command re-homes first if the coils are off, before moving to the new target.
-- The `D` command takes an optional `keep_energized` byte (see protocol table below) so a mode that updates frequently (`MODE_TIME` — every 60s) can leave coils powered between updates and skip the re-home each time, since re-homing every minute would be slower, noisier, and wear the limit switch. `main.py` leaves it off (default) for static text (`MODE_TEXT`, 8-ball, Claude responses) and `MODE_TEMP`, which can sit idle for a long time (or between infrequent digit changes) and benefit most from de-energizing.
-- Holding two coils continuously energized indefinitely is real, sustained heating — a 28BYJ-48 driven full-step (see `STEPPERH_SEQ` in `split_flap_controller.h`) always has two windings on at full current with no PWM current-limiting, and `MODE_TIME` previously held every digit for as long as the mode was active (effectively forever on a clock display). `print_string()`'s `keep_energized` parameter accepts a list/tuple (one bool per character, in `s`'s natural order) as well as a plain bool. `time_keep_energized(minutes)` in `main.py` only holds the minutes-units module — the one digit that changes on every single update — and even that gets a rest once every 10 minutes, right when it reaches `'9'` rather than `'0'`. Hours and minutes-tens change far less often, so they're left at `False` and just de-energize/re-home normally like any other infrequent update.
+- The `D` command takes an optional `keep_energized` byte (see protocol table below) so a field that updates frequently (a template's `minutes` field — every 60s) can leave coils powered between updates and skip the re-home each time, since re-homing every minute would be slower, noisier, and wear the limit switch. `layout.render()` leaves it off (default) for every field except `minutes`, and for static text (`MODE_TEXT`, 8-ball, Claude responses) — anything that can sit idle for a long time (or between infrequent changes) benefits most from de-energizing.
+- Holding two coils continuously energized indefinitely is real, sustained heating — a 28BYJ-48 driven full-step (see `STEPPERH_SEQ` in `split_flap_controller.h`) always has two windings on at full current with no PWM current-limiting, so a clock-like layout can't just hold every digit energized forever. `print_string()`'s `keep_energized` parameter accepts a list/tuple (one bool per character, in `s`'s natural order) as well as a plain bool. `layout.render()` only holds the **last rendered character of a `minutes` field** — the one digit that changes on every single update, always the ones digit regardless of the field's width/padding style — and even that gets a rest once every 10 minutes, right when it reaches `'9'` rather than `'0'`. Every other field/character (hours, date fields, temperature, etc.) is left at `False` and just de-energizes/re-homes normally like any other infrequent update. A template that omits `minutes` entirely gets no special-cased hold at all.
 - The rest lands on `'9'`, not `'0'`, because of where the home/limit-switch reference sits relative to `char_set`'s digit order: resting at `'9'` means the next forced re-home (`'9'`→`'0'`) retraces the same ~36-step sweep a direct move would take anyway (9 steps back to the switch + 27 more to `'0'`), so it costs nothing extra. Resting at `'0'` instead would mean the *following* update (`'0'`→`'1'`, normally a single step) pays for a 46-step round trip instead (18 back to the switch, 28 forward to `'1'`) — a wasted detour purely from choosing the wrong digit to rest on.
 - A `P` command explicitly de-energizes a module's coils on demand (no-op while it's busy); reachable from the Pico/UI via `POST /api/modules/power_down`.
 - Each module's live `energized` state is included in `GET /api/modules`, so the number of currently-energized modules can be used as a rough live estimate of holding-current draw. The ModulesPage shows it per module with a "PWR OFF" button.
@@ -177,9 +230,9 @@ cd firmware/pico
 ```
 
 - **USB** finds the Pico on `/dev/cu.usbmodem*` (macOS) or `/dev/ttyACM*` (Linux), uploads
-  `main.py`, `tz.py`, `index.html`, `setup.html`, `assets/index.js`, `assets/index.css` via
+  `main.py`, `tz.py`, `layout.py`, `index.html`, `setup.html`, `assets/index.js`, `assets/index.css` via
   `mpremote`, then reboots. Requires `mpremote` (`pip install mpremote`).
-- **`--ota [host]`** (host defaults to `openflaps.local` via mDNS) zips those same six
+- **`--ota [host]`** (host defaults to `openflaps.local` via mDNS) zips those same seven
   files (from `firmware/pico/`, so entry names match what the device expects) plus a
   generated `manifest.json` listing them, and POSTs the zip
   to `http://<host>/api/firmware/update` with `curl`; the Pico streams it straight to flash,
@@ -189,8 +242,8 @@ cd firmware/pico
 
   ```bash
   cd firmware/pico
-  echo '["main.py","tz.py","index.html","setup.html","assets/index.js","assets/index.css"]' > manifest.json
-  zip -0 -r update.zip main.py tz.py index.html setup.html assets/index.js assets/index.css manifest.json
+  echo '["main.py","tz.py","layout.py","index.html","setup.html","assets/index.js","assets/index.css"]' > manifest.json
+  zip -0 -r update.zip main.py tz.py layout.py index.html setup.html assets/index.js assets/index.css manifest.json
   rm manifest.json
   curl -X POST -H "Content-Type: application/zip" --data-binary @update.zip http://<host>/api/firmware/update
   ```
