@@ -12,7 +12,7 @@ async function post(path, body = null) {
 export const api = {
   state: () => fetch(BASE + '/api/state').then(r => r.json()),
   setText: (text) => post('/api/text', { text }),
-  setMode: (mode) => post('/api/mode', { mode }),
+  setMode: (mode, layoutName) => post('/api/mode', layoutName ? { mode, layout: layoutName } : { mode }),
   eightBall: () => post('/api/8ball'),
   home: () => post('/api/home'),
   askClaude: (prompt) => post('/api/claude', { prompt }),
@@ -24,6 +24,8 @@ export const api = {
   saveEnergy: (maxConcurrent) => post('/api/setup/energy', { max_concurrent: maxConcurrent }),
   getLayout: () => fetch(BASE + '/api/layout').then(r => r.json()),
   saveLayout: (charPerRow) => post('/api/setup/layout', { char_per_row: charPerRow }),
+  getLayouts: () => fetch(BASE + '/api/layouts').then(r => r.json()),
+  saveLayouts: (layouts, activeLayout) => post('/api/layouts', { layouts, active_layout: activeLayout }),
   getModules: () => fetch(BASE + '/api/modules').then(r => r.json()),
   updateModule: (address, newAddress, speed, offset) =>
     post('/api/modules', { address, new_address: newAddress, speed, offset }),
