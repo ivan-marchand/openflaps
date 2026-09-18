@@ -24,12 +24,17 @@ class PicoClient:
         # eight_ball, home, module calibration) can legitimately queue
         # behind another in-flight display dispatch -- the Pico's design
         # has a contended request simply wait for the lock rather than
-        # erroring, and a single dispatch has been measured up to ~9s on
-        # an 8-module display. 10s left no margin for that; 20s comfortably
-        # covers one queued predecessor without masking a truly dead Pico
-        # for long. ask_claude still overrides this with its own longer
-        # timeout for its much longer profile.
-        self._client = client or httpx.Client(base_url=self._base_url, timeout=20.0)
+        # erroring. Budget for BOTH halves of that: waiting out a queued
+        # predecessor's dispatch (~9-14s, measured worst case on an
+        # 8-module display) AND then running its own dispatch of the same
+        # order (set_text/home/eight_ball/set_layout all end in a locked
+        # print_string() dispatch; home_all() re-homes every module
+        # regardless of whether it changed, so if anything it's the
+        # longest single op). 30s comfortably covers one queued
+        # predecessor plus the call's own worst-case dispatch. ask_claude
+        # still overrides this with its own longer timeout for its much
+        # longer profile.
+        self._client = client or httpx.Client(base_url=self._base_url, timeout=30.0)
 
     def close(self) -> None:
         self._client.close()
