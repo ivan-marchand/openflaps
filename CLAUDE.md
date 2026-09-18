@@ -69,8 +69,8 @@ Or just run `./firmware/pico/deploy.sh` which builds, copies, and uploads everyt
 | `api.identifyModule(addr)` | `POST /api/modules/identify` |
 | `api.powerDownModule(addr)` | `POST /api/modules/power_down` |
 | `api.updateFirmware(zipFile)` | `POST /api/firmware/update` |
-| `api.getEnergy()` | `GET /api/energy` |
-| `api.saveEnergy(maxConcurrent)` | `POST /api/setup/energy` |
+| `api.getMaxConcurrentModules()` | `GET /api/max_concurrent_modules` |
+| `api.setMaxConcurrentModules(maxConcurrent)` | `POST /api/setup/max_concurrent_modules` |
 | `api.getLayout()` | `GET /api/layout` |
 | `api.saveLayout(charPerRow)` | `POST /api/setup/layout` |
 | `api.getLayouts()` | `GET /api/layouts` |
@@ -92,7 +92,7 @@ Config is stored in JSON files on Pico flash — all are gitignored:
 - `wifi_config.json` — `{"ssid": "...", "password": "..."}`
 - `api_config.json` — `{"key": "sk-ant-..."}` — Claude API key
 - `timezone_config.json` — `{"zone": "America/New_York"}` — IANA timezone name
-- `energy_config.json` — `{"max_concurrent": 4}` — max modules allowed to move simultaneously
+- `max_concurrent_modules_config.json` — `{"max_concurrent": 4}` — max modules allowed to move simultaneously. Renamed from `energy_config.json`; `load_max_concurrent()` migrates an existing device's old file to the new name on first boot after the rename, then deletes the old one.
 - `layout_config.json` — `{"char_per_row": -1, "layouts": [{"name": "Clock", "template": "{hours:02}{minutes:02}"}], "active_layout": "Clock"}` — `char_per_row`: modules per physical row (`-1` = single row spanning every detected module); `layouts`: the named template catalog (always ≥1 entry); `active_layout`: which one is currently live (always names an entry in `layouts`)
 
 Constants in `main.py`:
@@ -116,6 +116,37 @@ shipped a hand-rolled UDP responder (`firmware/pico/mdns.py`, bound directly to
 `224.0.0.251:5353`) before this native support was verified working; it was removed
 because it crashed boot outright (`OSError: [Errno 98] EADDRINUSE` binding a port
 the built-in responder already held) rather than just being redundant.
+
+## Concurrency (`mutation_lock`)
+
+`main.py`'s HTTP server runs on `uasyncio`, so multiple requests (plus the
+background `tick_loop`) interleave at every `await`. A single module-level
+`mutation_lock` (`asyncio.Lock`) serializes the parts that can't tolerate that.
+Any new route or background task must preserve these invariants:
+
+- **Every I2C bus operation** — reads (`i2c.scan()`, `i2c.readfrom()`,
+  `get_module_addresses()`) as well as writes — **and every persistent
+  config-file write** must happen inside `async with mutation_lock:`. An
+  interleaved read landing inside the ATtiny's documented 20 ms single-slot
+  buffer window can drop a legitimate command.
+- **The lock is non-reentrant.** Never acquire it from code that may already
+  hold it in the same task — in particular, do not add an acquisition inside
+  `get_module_addresses()` itself, since `print_string()` calls it from within
+  its own locked section. Lock the external call sites instead.
+- **Never hold it across a slow or unbounded wait**, especially a network call
+  (`call_claude()`, `get_outdoor_temp()`). Acquire it around the actual
+  I2C/config-write critical section only, as late and as briefly as possible.
+  The one intentional exception is `POST /api/firmware/update`, which holds
+  it across the whole upload — acceptable because the device reboots
+  afterward regardless, so nothing else needs to run concurrently with it.
+- **Status polls must not take it at all.** `GET /api/state` and
+  `GET /api/layout` read in-memory state only; `module_count` comes from the
+  `cached_module_count` global that `update_led()` refreshes (under the lock)
+  every `LED_I2C_RECHECK_INTERVAL`. That makes it up to 5 s stale, which is the
+  accepted tradeoff — the alternative is a health check that stalls for the
+  several seconds a display dispatch takes.
+
+Full rationale: `docs/superpowers/specs/2026-09-17-pico-async-concurrency-design.md`.
 
 ## Display Modes
 
@@ -190,7 +221,7 @@ Display width is auto-detected: `get_module_addresses()` walks `i2c.scan()` resu
 - A `P` command explicitly de-energizes a module's coils on demand (no-op while it's busy); reachable from the Pico/UI via `POST /api/modules/power_down`.
 - Each module's live `energized` state is included in `GET /api/modules`, so the number of currently-energized modules can be used as a rough live estimate of holding-current draw. The ModulesPage shows it per module with a "PWR OFF" button.
 - `print_string(s)` on the Pico limits how many modules are allowed to move at the same time, capping peak current draw across the bus. It dispatches `D` commands up to `max_concurrent_modules` at a time, then polls each module's `busy` status byte and starts the next queued character as slots free up.
-- `max_concurrent_modules` defaults to `4` and is configurable via `GET /api/energy` / `POST /api/setup/energy` (SetupPage "Max Modules Moving at Once"). Lowering it trades display update latency for lower peak power draw.
+- `max_concurrent_modules` defaults to `4` and is configurable via `GET /api/max_concurrent_modules` / `POST /api/setup/max_concurrent_modules` (SetupPage "Max Modules Moving at Once"). Lowering it trades display update latency for lower peak power draw.
 
 ## ATtiny84 I2C Protocol
 

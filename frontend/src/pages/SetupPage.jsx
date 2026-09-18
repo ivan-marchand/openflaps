@@ -30,7 +30,7 @@ export function SetupPage() {
       setZones(data.zones || [])
       setSelectedZone(data.current || '')
     }).catch(() => {})
-    api.getEnergy().then(data => {
+    api.getMaxConcurrentModules().then(data => {
       setMaxConcurrent(String(data.max_concurrent ?? ''))
     }).catch(() => {})
     api.getLayout().then(data => {
@@ -74,14 +74,14 @@ export function SetupPage() {
     } finally { setBusy(false) }
   }
 
-  async function saveEnergy(e) {
+  async function saveMaxConcurrent(e) {
     e.preventDefault()
     const value = parseInt(maxConcurrent, 10)
     if (!value || value < 1) return
     setBusy(true)
     try {
-      const r = await api.saveEnergy(value)
-      setStatus(r.ok ? 'Energy setting saved.' : r.error || 'Error.')
+      const r = await api.setMaxConcurrentModules(value)
+      setStatus(r.ok ? 'Max concurrent modules saved.' : r.error || 'Error.')
     } finally { setBusy(false) }
   }
 
@@ -180,7 +180,7 @@ export function SetupPage() {
 
       <div class="display-card" style="margin-bottom:12px;">
         <div class="field-label">Max Modules Moving at Once</div>
-        <form onSubmit={saveEnergy}>
+        <form onSubmit={saveMaxConcurrent}>
           <input
             type="number"
             min="1"
