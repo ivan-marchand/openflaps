@@ -20,7 +20,16 @@ class PicoAPIError(RuntimeError):
 class PicoClient:
     def __init__(self, base_url: str, client: httpx.Client | None = None):
         self._base_url = base_url.rstrip("/")
-        self._client = client or httpx.Client(base_url=self._base_url, timeout=10.0)
+        # Any call that touches mutation_lock (set_text, set_layout,
+        # eight_ball, home, module calibration) can legitimately queue
+        # behind another in-flight display dispatch -- the Pico's design
+        # has a contended request simply wait for the lock rather than
+        # erroring, and a single dispatch has been measured up to ~9s on
+        # an 8-module display. 10s left no margin for that; 20s comfortably
+        # covers one queued predecessor without masking a truly dead Pico
+        # for long. ask_claude still overrides this with its own longer
+        # timeout for its much longer profile.
+        self._client = client or httpx.Client(base_url=self._base_url, timeout=20.0)
 
     def close(self) -> None:
         self._client.close()
