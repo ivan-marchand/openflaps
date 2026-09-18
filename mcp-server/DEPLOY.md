@@ -6,11 +6,11 @@ host the MCP server. It must be on the same LAN as the Pico.
 ## 1. Install the server
 
 ```bash
-sudo mkdir -p /opt/openflap
-sudo chown "$USER" /opt/openflap
-git clone git@github.com:ivan-marchand/openflaps.git /opt/openflap/repo
-sudo ln -s /opt/openflap/repo/mcp-server /opt/openflap/mcp-server
-cd /opt/openflap/mcp-server
+sudo mkdir -p /opt/openflaps
+sudo chown "$USER" /opt/openflaps
+git clone git@github.com:ivan-marchand/openflaps.git /opt/openflaps/repo
+sudo ln -s /opt/openflaps/repo/mcp-server /opt/openflaps/mcp-server
+cd /opt/openflaps/mcp-server
 python3 -m venv .venv
 .venv/bin/pip install -e .
 ```
@@ -28,12 +28,12 @@ chmod 600 .env   # it holds MCP_AUTH_PASSWORD
 ## 3. Install the systemd service
 
 The service runs as a dedicated `openflap` system account, so create it and
-hand it ownership of `/opt/openflap` (including `mcp-server/data/tokens.json`,
+hand it ownership of `/opt/openflaps` (including `mcp-server/data/tokens.json`,
 which the running service needs to write) before starting it:
 
 ```bash
 sudo useradd --system --no-create-home openflap
-sudo chown -R openflap:openflap /opt/openflap
+sudo chown -R openflap:openflap /opt/openflaps
 sudo cp systemd/openflap-mcp.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now openflap-mcp
