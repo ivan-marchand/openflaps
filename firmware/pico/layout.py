@@ -30,130 +30,87 @@ _CONDITIONS = {
 }
 
 
-def _weather_value(weather, key):
-    # weather is the dict main.py's get_weather() returns (None until the
-    # first successful fetch); individual keys can also be None if the API
-    # omitted that reading.
-    if weather is None:
-        return None
-    return weather.get(key)
-
-
-def _f_month(lt, weather):
+def _f_month(lt):
     return lt[1]
 
 
-def _f_month_name(lt, weather):
+def _f_month_name(lt):
     return _MONTH_NAMES[lt[1] - 1]
 
 
-def _f_day(lt, weather):
+def _f_day(lt):
     return lt[2]
 
 
-def _f_year(lt, weather):
+def _f_year(lt):
     return lt[0]
 
 
-def _f_hours(lt, weather):
+def _f_hours(lt):
     return lt[3]
 
 
-def _f_hours12(lt, weather):
+def _f_hours12(lt):
     h = lt[3] % 12
     return 12 if h == 0 else h
 
 
-def _f_minutes(lt, weather):
+def _f_minutes(lt):
     return lt[4]
 
 
-def _f_ampm(lt, weather):
+def _f_ampm(lt):
     return "PM" if lt[3] >= 12 else "AM"
 
 
-def _f_weekday(lt, weather):
+def _f_weekday(lt):
     return _WEEKDAY_NAMES[lt[6]]
 
 
-def _f_temperature_f(lt, weather):
-    temp_c = _weather_value(weather, "temp_c")
-    if temp_c is None:
-        return None
+def _c_to_f(temp_c):
     return int(round(32 + temp_c * 9 / 5))
 
 
-def _f_temperature_c(lt, weather):
-    temp_c = _weather_value(weather, "temp_c")
-    if temp_c is None:
-        return None
-    return int(round(temp_c))
+def _kmh_to_mph(kmh):
+    return int(round(kmh * 0.621371))
 
 
-def _f_humidity(lt, weather):
-    humidity = _weather_value(weather, "humidity")
-    if humidity is None:
-        return None
-    return int(round(humidity))
-
-
-def _f_wind_mph(lt, weather):
-    wind_kmh = _weather_value(weather, "wind_kmh")
-    if wind_kmh is None:
-        return None
-    return int(round(wind_kmh * 0.621371))
-
-
-def _f_wind_kmh(lt, weather):
-    wind_kmh = _weather_value(weather, "wind_kmh")
-    if wind_kmh is None:
-        return None
-    return int(round(wind_kmh))
-
-
-def _f_wind_deg(lt, weather):
-    deg = _weather_value(weather, "wind_deg")
-    if deg is None:
-        return None
-    return int(round(deg)) % 360
-
-
-def _f_wind_dir(lt, weather):
-    deg = _weather_value(weather, "wind_deg")
-    if deg is None:
-        return None
+def _compass(deg):
     return _COMPASS[int((deg + 11.25) / 22.5) % 16]
 
 
-def _f_condition(lt, weather):
-    code = _weather_value(weather, "code")
-    if code is None:
-        return None
-    return _CONDITIONS.get(code)
+def _degrees(deg):
+    return int(round(deg)) % 360
 
 
-# Each descriptor: fn(localtime, weather) -> raw value (int for numeric
-# fields, str for text fields; None for a weather field with no reading yet).
-# "widths" (only on `year`) restricts explicit widths to that exact set,
-# taking precedence over "min_width".
+# Each descriptor has a "source":
+#   "time"    -- "fn"(localtime) -> raw value.
+#   "weather" -- "key" names a reading in the dict main.py's get_weather()
+#                returns; "convert"(reading) -> raw value.
+# Raw values are int for numeric fields and str for text fields. A weather
+# field yields None -- rendered as dashes -- when there is no reading yet
+# (the dict itself is None until the first successful fetch), the API omitted
+# that reading, or "convert" has no mapping for it. "widths" (only on `year`)
+# restricts explicit widths to that exact set, taking precedence over
+# "min_width".
 FIELDS = {
-    "month": {"fn": _f_month, "numeric": True, "min_width": 2, "max_natural": 2},
-    "month_name": {"fn": _f_month_name, "numeric": False, "min_width": 3, "max_natural": 3},
-    "day": {"fn": _f_day, "numeric": True, "min_width": 2, "max_natural": 2},
-    "year": {"fn": _f_year, "numeric": True, "min_width": 2, "max_natural": 4, "widths": (2, 4)},
-    "hours": {"fn": _f_hours, "numeric": True, "min_width": 2, "max_natural": 2},
-    "hours12": {"fn": _f_hours12, "numeric": True, "min_width": 2, "max_natural": 2},
-    "minutes": {"fn": _f_minutes, "numeric": True, "min_width": 2, "max_natural": 2},
-    "ampm": {"fn": _f_ampm, "numeric": False, "min_width": 2, "max_natural": 2},
-    "weekday": {"fn": _f_weekday, "numeric": False, "min_width": 3, "max_natural": 3},
-    "temperature_f": {"fn": _f_temperature_f, "numeric": True, "min_width": 2, "max_natural": 3},
-    "temperature_c": {"fn": _f_temperature_c, "numeric": True, "min_width": 2, "max_natural": 3},
-    "humidity": {"fn": _f_humidity, "numeric": True, "min_width": 2, "max_natural": 3},
-    "wind_mph": {"fn": _f_wind_mph, "numeric": True, "min_width": 2, "max_natural": 3},
-    "wind_kmh": {"fn": _f_wind_kmh, "numeric": True, "min_width": 2, "max_natural": 3},
-    "wind_deg": {"fn": _f_wind_deg, "numeric": True, "min_width": 2, "max_natural": 3},
-    "wind_dir": {"fn": _f_wind_dir, "numeric": False, "min_width": 2, "max_natural": 3},
-    "condition": {"fn": _f_condition, "numeric": False, "min_width": 3, "max_natural": 4},
+    "month": {"source": "time", "fn": _f_month, "numeric": True, "min_width": 2, "max_natural": 2},
+    "month_name": {"source": "time", "fn": _f_month_name, "numeric": False, "min_width": 3, "max_natural": 3},
+    "day": {"source": "time", "fn": _f_day, "numeric": True, "min_width": 2, "max_natural": 2},
+    "year": {"source": "time", "fn": _f_year, "numeric": True, "min_width": 2, "max_natural": 4, "widths": (2, 4)},
+    "hours": {"source": "time", "fn": _f_hours, "numeric": True, "min_width": 2, "max_natural": 2},
+    "hours12": {"source": "time", "fn": _f_hours12, "numeric": True, "min_width": 2, "max_natural": 2},
+    "minutes": {"source": "time", "fn": _f_minutes, "numeric": True, "min_width": 2, "max_natural": 2},
+    "ampm": {"source": "time", "fn": _f_ampm, "numeric": False, "min_width": 2, "max_natural": 2},
+    "weekday": {"source": "time", "fn": _f_weekday, "numeric": False, "min_width": 3, "max_natural": 3},
+    "temperature_f": {"source": "weather", "key": "temp_c", "convert": _c_to_f, "numeric": True, "min_width": 2, "max_natural": 3},
+    "temperature_c": {"source": "weather", "key": "temp_c", "convert": round, "numeric": True, "min_width": 2, "max_natural": 3},
+    "humidity": {"source": "weather", "key": "humidity", "convert": round, "numeric": True, "min_width": 2, "max_natural": 3},
+    "wind_mph": {"source": "weather", "key": "wind_kmh", "convert": _kmh_to_mph, "numeric": True, "min_width": 2, "max_natural": 3},
+    "wind_kmh": {"source": "weather", "key": "wind_kmh", "convert": round, "numeric": True, "min_width": 2, "max_natural": 3},
+    "wind_deg": {"source": "weather", "key": "wind_deg", "convert": _degrees, "numeric": True, "min_width": 2, "max_natural": 3},
+    "wind_dir": {"source": "weather", "key": "wind_deg", "convert": _compass, "numeric": False, "min_width": 2, "max_natural": 3},
+    "condition": {"source": "weather", "key": "code", "convert": _CONDITIONS.get, "numeric": False, "min_width": 3, "max_natural": 4},
 }
 
 
@@ -217,14 +174,8 @@ def parse_template(template):
     return tokens
 
 
-_WEATHER_FIELDS = (
-    "temperature_f", "temperature_c", "humidity", "wind_mph", "wind_kmh",
-    "wind_deg", "wind_dir", "condition",
-)
-
-
 def uses_weather(tokens):
-    return any(t[0] == "field" and t[1] in _WEATHER_FIELDS for t in tokens)
+    return any(t[0] == "field" and FIELDS[t[1]]["source"] == "weather" for t in tokens)
 
 
 def required_width(tokens):
@@ -264,6 +215,15 @@ def _render_text(raw, width):
     return raw
 
 
+def _field_value(field, localtime, weather):
+    if field["source"] == "time":
+        return field["fn"](localtime)
+    reading = None if weather is None else weather.get(field["key"])
+    if reading is None:
+        return None
+    return field["convert"](reading)
+
+
 def render(tokens, localtime, weather):
     text = ""
     keep_energized = []
@@ -276,10 +236,9 @@ def render(tokens, localtime, weather):
 
         _, name, width, zero_pad = token
         field = FIELDS[name]
-        raw = field["fn"](localtime, weather)
+        raw = _field_value(field, localtime, weather)
 
         if raw is None:
-            # Only weather fields return None (no reading yet).
             rendered = "-" * (width if width is not None else 3)
         elif field["numeric"]:
             rendered = _render_numeric(raw, width, zero_pad)
