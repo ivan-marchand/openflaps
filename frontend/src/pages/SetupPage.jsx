@@ -38,7 +38,7 @@ export function SetupPage() {
       setModuleCount(data.module_count ?? null)
     }).catch(() => {})
     api.getLayouts().then(data => {
-      setLayoutRows((data.layouts || []).map(l => ({ name: l.name, template: l.template })))
+      setLayoutRows((data.layouts || []).map(l => ({ name: l.name, template: l.template, align: l.align || 'left' })))
       setActiveLayout(data.active_layout || '')
     }).catch(() => {})
   }, [])
@@ -101,7 +101,7 @@ export function SetupPage() {
   }
 
   function addLayoutRow() {
-    setLayoutRows(rows => [...rows, { name: '', template: '' }])
+    setLayoutRows(rows => [...rows, { name: '', template: '', align: 'left' }])
   }
 
   function removeLayoutRow(index) {
@@ -118,7 +118,7 @@ export function SetupPage() {
       setStatus(r.ok ? 'Layouts saved.' : r.error || 'Error.')
       if (r.ok) {
         const data = await api.getLayouts()
-        setLayoutRows((data.layouts || []).map(l => ({ name: l.name, template: l.template })))
+        setLayoutRows((data.layouts || []).map(l => ({ name: l.name, template: l.template, align: l.align || 'left' })))
         setActiveLayout(data.active_layout || '')
       }
     } finally { setBusy(false) }
@@ -218,13 +218,12 @@ export function SetupPage() {
         <div class="field-label">Layouts</div>
         <form onSubmit={saveLayouts}>
           {layoutRows.map((row, i) => (
-            <div class="input-row" style="margin-bottom:8px;" key={i}>
+            <div class="input-row layout-row" style="margin-bottom:8px;" key={i}>
               <input
                 type="text"
                 placeholder="Name"
                 value={row.name}
                 onInput={e => updateLayoutRow(i, 'name', e.target.value)}
-                style="max-width:120px;"
               />
               <input
                 type="text"
@@ -232,6 +231,15 @@ export function SetupPage() {
                 value={row.template}
                 onInput={e => updateLayoutRow(i, 'template', e.target.value)}
               />
+              <select
+                value={row.align || 'left'}
+                onInput={e => updateLayoutRow(i, 'align', e.target.value)}
+                title="Alignment within the display row"
+              >
+                <option value="left">Left</option>
+                <option value="center">Center</option>
+                <option value="right">Right</option>
+              </select>
               <button type="button" class="btn" disabled={layoutRows.length <= 1} onClick={() => removeLayoutRow(i)}>DEL</button>
             </div>
           ))}
@@ -239,9 +247,11 @@ export function SetupPage() {
             <button type="button" class="btn" onClick={addLayoutRow}>+ ADD LAYOUT</button>
           </div>
           <div style="margin-bottom:10px;font-size:0.85em;opacity:0.7;">
-            Fields: month, day, year, hours, hours12, minutes, ampm, weekday,
-            temperature_f, temperature_c. Use {'{field}'} for natural width,
+            Fields: month, month_name, day, year, hours, hours12, minutes, ampm, weekday,
+            temperature_f, temperature_c, humidity, wind_mph, wind_kmh, wind_deg,
+            wind_dir, condition. Use {'{field}'} for natural width,
             {'{field:N}'} to space-pad/truncate, {'{field:0N}'} to zero-pad/truncate.
+            Alignment positions the text within each display row when it is shorter than the row.
           </div>
           <button class="btn" type="submit" disabled={busy || layoutRows.length === 0}>SAVE LAYOUTS</button>
         </form>

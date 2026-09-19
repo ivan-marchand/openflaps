@@ -11,7 +11,6 @@ from mcp_server.server import DISPLAY_CHARSET, build_app, build_server
 EXPECTED_TOOL_NAMES = {
     "set_text",
     "set_layout",
-    "eight_ball",
     "home",
     "ask_claude",
     "get_state",

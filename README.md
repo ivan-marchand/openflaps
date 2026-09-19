@@ -11,7 +11,7 @@ interface and communicates via I²C with ATtiny84 controllers, each driving a
 ## Features
 
 - **Web UI** — control display from any browser on your network, reachable at `openflaps.local` via mDNS
-- **Modes** — show custom text, clock, outdoor temperature, magic 8-ball, or ask Claude AI
+- **Modes** — show custom text, clock, outdoor temperature, or ask Claude AI
 - **Modules page** — calibrate each character module (I²C address, speed, offset)
 - **Pairing mode** — add new modules without opening Arduino IDE
 - **Expandable** — designed to chain as many characters as you need

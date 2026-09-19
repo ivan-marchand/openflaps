@@ -52,7 +52,6 @@ def test_post_without_body_sends_no_content():
 
     client = make_client(handler)
 
-    client.eight_ball()
     client.home()
 
 

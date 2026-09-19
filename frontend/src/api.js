@@ -13,7 +13,6 @@ export const api = {
   state: () => fetch(BASE + '/api/state').then(r => r.json()),
   setText: (text) => post('/api/text', { text }),
   setMode: (mode, layoutName) => post('/api/mode', layoutName ? { mode, layout: layoutName } : { mode }),
-  eightBall: () => post('/api/8ball'),
   home: () => post('/api/home'),
   askClaude: (prompt) => post('/api/claude', { prompt }),
   saveWifi: (ssid, password) => post('/api/setup/wifi', { ssid, password }),

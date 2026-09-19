@@ -5,69 +5,114 @@
 # in the width digits selects zero-padding). See
 # docs/plans/2026-09-16-layout-templates-design.md for the full design.
 
+ALIGNMENTS = ("left", "center", "right")
+
 _WEEKDAY_NAMES = ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
+_MONTH_NAMES = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
+
+_COMPASS = (
+    "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+    "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
+)
+
+# WMO weather interpretation codes (what Open-Meteo's `weather_code` returns)
+# collapsed to <= 4 characters from the display charset. A code not listed
+# here renders as dashes, same as a missing reading.
+_CONDITIONS = {
+    0: "CLR", 1: "CLR", 2: "PCLD", 3: "CLD",
+    45: "FOG", 48: "FOG",
+    51: "DRZL", 53: "DRZL", 55: "DRZL",
+    56: "ICE", 57: "ICE",
+    61: "RAIN", 63: "RAIN", 65: "RAIN",
+    66: "ICE", 67: "ICE",
+    71: "SNOW", 73: "SNOW", 75: "SNOW", 77: "SNOW",
+    80: "SHWR", 81: "SHWR", 82: "SHWR",
+    85: "SNOW", 86: "SNOW",
+    95: "TSTM", 96: "TSTM", 99: "TSTM",
+}
 
 
-def _f_month(lt, temp_c):
+def _f_month(lt):
     return lt[1]
 
 
-def _f_day(lt, temp_c):
+def _f_month_name(lt):
+    return _MONTH_NAMES[lt[1] - 1]
+
+
+def _f_day(lt):
     return lt[2]
 
 
-def _f_year(lt, temp_c):
+def _f_year(lt):
     return lt[0]
 
 
-def _f_hours(lt, temp_c):
+def _f_hours(lt):
     return lt[3]
 
 
-def _f_hours12(lt, temp_c):
+def _f_hours12(lt):
     h = lt[3] % 12
     return 12 if h == 0 else h
 
 
-def _f_minutes(lt, temp_c):
+def _f_minutes(lt):
     return lt[4]
 
 
-def _f_ampm(lt, temp_c):
+def _f_ampm(lt):
     return "PM" if lt[3] >= 12 else "AM"
 
 
-def _f_weekday(lt, temp_c):
+def _f_weekday(lt):
     return _WEEKDAY_NAMES[lt[6]]
 
 
-def _f_temperature_f(lt, temp_c):
-    if temp_c is None:
-        return None
+def _c_to_f(temp_c):
     return int(round(32 + temp_c * 9 / 5))
 
 
-def _f_temperature_c(lt, temp_c):
-    if temp_c is None:
-        return None
-    return int(round(temp_c))
+def _kmh_to_mph(kmh):
+    return int(round(kmh * 0.621371))
 
 
-# Each descriptor: fn(localtime, temp_c) -> raw value (int for numeric
-# fields and possibly None for temperature fields; str for text fields).
-# "widths" (only on `year`) restricts explicit widths to that exact set,
-# taking precedence over "min_width".
+def _compass(deg):
+    return _COMPASS[int((deg + 11.25) / 22.5) % 16]
+
+
+def _degrees(deg):
+    return int(round(deg)) % 360
+
+
+# Each descriptor has a "source":
+#   "time"    -- "fn"(localtime) -> raw value.
+#   "weather" -- "key" names a reading in the dict main.py's get_weather()
+#                returns; "convert"(reading) -> raw value.
+# Raw values are int for numeric fields and str for text fields. A weather
+# field yields None -- rendered as dashes -- when there is no reading yet
+# (the dict itself is None until the first successful fetch), the API omitted
+# that reading, or "convert" has no mapping for it. "widths" (only on `year`)
+# restricts explicit widths to that exact set, taking precedence over
+# "min_width".
 FIELDS = {
-    "month": {"fn": _f_month, "numeric": True, "min_width": 2, "max_natural": 2},
-    "day": {"fn": _f_day, "numeric": True, "min_width": 2, "max_natural": 2},
-    "year": {"fn": _f_year, "numeric": True, "min_width": 2, "max_natural": 4, "widths": (2, 4)},
-    "hours": {"fn": _f_hours, "numeric": True, "min_width": 2, "max_natural": 2},
-    "hours12": {"fn": _f_hours12, "numeric": True, "min_width": 2, "max_natural": 2},
-    "minutes": {"fn": _f_minutes, "numeric": True, "min_width": 2, "max_natural": 2},
-    "ampm": {"fn": _f_ampm, "numeric": False, "min_width": 2, "max_natural": 2},
-    "weekday": {"fn": _f_weekday, "numeric": False, "min_width": 3, "max_natural": 3},
-    "temperature_f": {"fn": _f_temperature_f, "numeric": True, "min_width": 2, "max_natural": 3},
-    "temperature_c": {"fn": _f_temperature_c, "numeric": True, "min_width": 2, "max_natural": 3},
+    "month": {"source": "time", "fn": _f_month, "numeric": True, "min_width": 2, "max_natural": 2},
+    "month_name": {"source": "time", "fn": _f_month_name, "numeric": False, "min_width": 3, "max_natural": 3},
+    "day": {"source": "time", "fn": _f_day, "numeric": True, "min_width": 2, "max_natural": 2},
+    "year": {"source": "time", "fn": _f_year, "numeric": True, "min_width": 2, "max_natural": 4, "widths": (2, 4)},
+    "hours": {"source": "time", "fn": _f_hours, "numeric": True, "min_width": 2, "max_natural": 2},
+    "hours12": {"source": "time", "fn": _f_hours12, "numeric": True, "min_width": 2, "max_natural": 2},
+    "minutes": {"source": "time", "fn": _f_minutes, "numeric": True, "min_width": 2, "max_natural": 2},
+    "ampm": {"source": "time", "fn": _f_ampm, "numeric": False, "min_width": 2, "max_natural": 2},
+    "weekday": {"source": "time", "fn": _f_weekday, "numeric": False, "min_width": 3, "max_natural": 3},
+    "temperature_f": {"source": "weather", "key": "temp_c", "convert": _c_to_f, "numeric": True, "min_width": 2, "max_natural": 3},
+    "temperature_c": {"source": "weather", "key": "temp_c", "convert": round, "numeric": True, "min_width": 2, "max_natural": 3},
+    "humidity": {"source": "weather", "key": "humidity", "convert": round, "numeric": True, "min_width": 2, "max_natural": 3},
+    "wind_mph": {"source": "weather", "key": "wind_kmh", "convert": _kmh_to_mph, "numeric": True, "min_width": 2, "max_natural": 3},
+    "wind_kmh": {"source": "weather", "key": "wind_kmh", "convert": round, "numeric": True, "min_width": 2, "max_natural": 3},
+    "wind_deg": {"source": "weather", "key": "wind_deg", "convert": _degrees, "numeric": True, "min_width": 2, "max_natural": 3},
+    "wind_dir": {"source": "weather", "key": "wind_deg", "convert": _compass, "numeric": False, "min_width": 2, "max_natural": 3},
+    "condition": {"source": "weather", "key": "code", "convert": _CONDITIONS.get, "numeric": False, "min_width": 3, "max_natural": 4},
 }
 
 
@@ -131,11 +176,8 @@ def parse_template(template):
     return tokens
 
 
-_TEMPERATURE_FIELDS = ("temperature_f", "temperature_c")
-
-
-def uses_temperature(tokens):
-    return any(t[0] == "field" and t[1] in _TEMPERATURE_FIELDS for t in tokens)
+def uses_weather(tokens):
+    return any(t[0] == "field" and FIELDS[t[1]]["source"] == "weather" for t in tokens)
 
 
 def required_width(tokens):
@@ -175,7 +217,16 @@ def _render_text(raw, width):
     return raw
 
 
-def render(tokens, localtime, temp_c):
+def _field_value(field, localtime, weather):
+    if field["source"] == "time":
+        return field["fn"](localtime)
+    reading = None if weather is None else weather.get(field["key"])
+    if reading is None:
+        return None
+    return field["convert"](reading)
+
+
+def render(tokens, localtime, weather):
     text = ""
     keep_energized = []
     for token in tokens:
@@ -187,10 +238,9 @@ def render(tokens, localtime, temp_c):
 
         _, name, width, zero_pad = token
         field = FIELDS[name]
-        raw = field["fn"](localtime, temp_c)
+        raw = _field_value(field, localtime, weather)
 
         if raw is None:
-            # Only temperature fields return None (no reading yet).
             rendered = "-" * (width if width is not None else 3)
         elif field["numeric"]:
             rendered = _render_numeric(raw, width, zero_pad)
@@ -204,3 +254,35 @@ def render(tokens, localtime, temp_c):
         keep_energized.extend(mask)
 
     return text, keep_energized
+
+
+def align_rows(text, flags, row_lengths, align):
+    # Lay `text` (and its per-character keep_energized `flags`) out over
+    # physical rows of the given lengths, one row-sized chunk of text per
+    # row -- the same hard wrap print_string() applies -- and place each
+    # chunk within its row per `align`. A chunk that already fills its row is
+    # untouched; only a short one (the whole text on a single row, or the
+    # last chunk of a wrapped text) gets padded. Centering an odd gap puts
+    # the extra space on the right. Padding spaces get a False flag. Text
+    # beyond the total row capacity is dropped, and with no rows at all (no
+    # modules detected) the text is returned as is.
+    if not row_lengths:
+        return text, flags
+    out_text = ""
+    out_flags = []
+    idx = 0
+    for n in row_lengths:
+        chunk = text[idx:idx + n]
+        chunk_flags = list(flags[idx:idx + len(chunk)])
+        idx += n
+        gap = n - len(chunk)
+        if align == "right":
+            left = gap
+        elif align == "center":
+            left = gap // 2
+        else:
+            left = 0
+        right = gap - left
+        out_text += " " * left + chunk + " " * right
+        out_flags.extend([False] * left + chunk_flags + [False] * right)
+    return out_text, out_flags
