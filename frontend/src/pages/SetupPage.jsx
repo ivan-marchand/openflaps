@@ -239,7 +239,7 @@ export function SetupPage() {
             <button type="button" class="btn" onClick={addLayoutRow}>+ ADD LAYOUT</button>
           </div>
           <div style="margin-bottom:10px;font-size:0.85em;opacity:0.7;">
-            Fields: month, day, year, hours, hours12, minutes, ampm, weekday,
+            Fields: month, month_name, day, year, hours, hours12, minutes, ampm, weekday,
             temperature_f, temperature_c, humidity, wind_mph, wind_kmh, wind_deg,
             wind_dir, condition. Use {'{field}'} for natural width,
             {'{field:N}'} to space-pad/truncate, {'{field:0N}'} to zero-pad/truncate.
