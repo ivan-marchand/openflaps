@@ -229,10 +229,17 @@ def save_active_layout(name):
         print("Failed to save layout config:", e)
         return False
 
+def _entry_align(entry):
+    # Layouts saved before alignment existed have no "align" key; a
+    # hand-edited config could hold anything. Both fall back to left.
+    align = entry.get("align")
+    return align if align in layout.ALIGNMENTS else "left"
+
 def _rebuild_layout_cache():
-    global layout_tokens_cache, layout_required_width_cache
+    global layout_tokens_cache, layout_required_width_cache, layout_align_cache
     layout_tokens_cache = {}
     layout_required_width_cache = {}
+    layout_align_cache = {}
     for entry in current_layouts:
         try:
             tokens = layout.parse_template(entry["template"])
@@ -241,6 +248,7 @@ def _rebuild_layout_cache():
             continue
         layout_tokens_cache[entry["name"]] = tokens
         layout_required_width_cache[entry["name"]] = layout.required_width(tokens)
+        layout_align_cache[entry["name"]] = _entry_align(entry)
     if not layout_tokens_cache:
         # Every persisted layout failed to parse -- fall back to the
         # always-valid default so the device still boots with something
@@ -249,6 +257,7 @@ def _rebuild_layout_cache():
         tokens = layout.parse_template(fallback["template"])
         layout_tokens_cache[fallback["name"]] = tokens
         layout_required_width_cache[fallback["name"]] = layout.required_width(tokens)
+        layout_align_cache[fallback["name"]] = _entry_align(fallback)
 
 # ----------------------------
 # HTTP helpers (needed by both provisioning and main server)
@@ -671,6 +680,15 @@ def get_module_addresses():
         address += 1
     return module_addresses
 
+def row_lengths_for(count):
+    # Physical row sizes for `count` modules under the current char_per_row
+    # (last row may be shorter); <= 0 means one row spanning every module.
+    # Mirrors the row split print_string() does on the module addresses.
+    row_width = char_per_row if char_per_row > 0 else count
+    if row_width <= 0:
+        return []
+    return [min(row_width, count - i) for i in range(0, count, row_width)]
+
 async def print_string(s: str, keep_energized=False):
     # keep_energized: bool, or a list/tuple of one bool per character of s.
     print(f"Displaying: {s}")
@@ -933,6 +951,7 @@ current_layouts = DEFAULT_LAYOUTS
 active_layout_name = DEFAULT_ACTIVE_LAYOUT
 layout_tokens_cache = {}
 layout_required_width_cache = {}
+layout_align_cache = {}
 
 async def render_active_layout():
     global last_text, minutes, last_weather_update, last_weather
@@ -947,8 +966,15 @@ async def render_active_layout():
             last_weather = fetched
             weather = fetched
     text, keep_energized = layout.render(tokens, lt, weather)
-    last_text = text
     async with mutation_lock:
+        # Alignment needs the real module count, and that's an I2C read, so
+        # it happens under the lock. last_text is set to the aligned text
+        # (before the slow dispatch) so the UI preview matches the display.
+        row_lengths = row_lengths_for(len(get_module_addresses()))
+        text, keep_energized = layout.align_rows(
+            text, keep_energized, row_lengths, layout_align_cache[active_layout_name]
+        )
+        last_text = text
         await print_string(text, keep_energized=keep_energized)
 
 # Onboard LED status tracking (see update_led()): i2c_ok is re-checked
@@ -1529,6 +1555,7 @@ async def handle_request(conn):
                     {
                         "name": entry["name"],
                         "template": entry["template"],
+                        "align": layout_align_cache[entry["name"]],
                         "required_width": layout_required_width_cache[entry["name"]],
                     }
                     for entry in current_layouts
@@ -1553,8 +1580,12 @@ async def handle_request(conn):
                 template = entry.get("template") if isinstance(entry, dict) else None
                 if not isinstance(template, str):
                     template = ""
+                align = entry.get("align", "left") if isinstance(entry, dict) else "left"
                 if not name:
                     await async_http_send_json(conn, {"ok": False, "error": "Layout name cannot be empty."}, code="400 Bad Request")
+                    return
+                if align not in layout.ALIGNMENTS:
+                    await async_http_send_json(conn, {"ok": False, "error": "Layout '{}': align must be one of {}".format(name, ", ".join(layout.ALIGNMENTS))}, code="400 Bad Request")
                     return
                 if name in names:
                     await async_http_send_json(conn, {"ok": False, "error": "Duplicate layout name: {}".format(name)}, code="400 Bad Request")
@@ -1565,7 +1596,7 @@ async def handle_request(conn):
                     await async_http_send_json(conn, {"ok": False, "error": "Layout '{}': {}".format(name, e)}, code="400 Bad Request")
                     return
                 names.append(name)
-                clean_layouts.append({"name": name, "template": template})
+                clean_layouts.append({"name": name, "template": template, "align": align})
 
             if new_active is not None and new_active not in names:
                 await async_http_send_json(conn, {"ok": False, "error": "active_layout must name one of the posted layouts."}, code="400 Bad Request")
