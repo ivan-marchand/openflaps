@@ -1,6 +1,5 @@
 from time import sleep
 import time
-import urandom
 import gc
 from machine import I2C, Pin
 import network
@@ -790,18 +789,6 @@ def update_module_params(address, speed, offset, new_address):
         print("Failed to update module {}: {}".format(hex(address), e))
         return False
 
-EIGHTBALL_4 = [
-    "YES ", "NO  ", "YEP ", "NAH ",
-    "MAYB", "SURE", "OKAY", "IDK ",
-    "ASK ", "L8TR", "WAIT", "HMMM",
-    "GOOD", "BADD", "SAFE", "RISK",
-]
-
-async def eightball_roll():
-    ans = EIGHTBALL_4[urandom.getrandbits(8) % len(EIGHTBALL_4)]
-    await print_string(ans)
-    return ans
-
 # ----------------------------
 # Claude API
 # ----------------------------
@@ -1375,13 +1362,6 @@ async def handle_request(conn):
                 await async_http_send_json(conn, {"ok": True, "status": status_line})
             else:
                 await async_http_send_json(conn, {"ok": False, "error": "Unknown mode."}, code="400 Bad Request")
-
-        elif route == "/api/8ball" and method == "POST":
-            async with mutation_lock:
-                last_text = await eightball_roll()
-            mode = MODE_TEXT
-            status_line = "Shaking..."
-            await async_http_send_json(conn, {"ok": True, "text": last_text, "status": status_line})
 
         elif route == "/api/home" and method == "POST":
             async with mutation_lock:

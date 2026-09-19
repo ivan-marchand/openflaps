@@ -132,11 +132,6 @@ def build_server(config: Config, pico_client: PicoClient | None = None) -> MCPSe
         return _translate_errors(pico.set_layout, layout_name)
 
     @mcp.tool()
-    def eight_ball() -> dict:
-        """Show a random Magic 8-Ball style answer on the display."""
-        return _translate_errors(pico.eight_ball)
-
-    @mcp.tool()
     def home() -> dict:
         """Re-home all display modules."""
         return _translate_errors(pico.home)
