@@ -204,7 +204,7 @@ def build_server(config: Config, pico_client: PicoClient | None = None) -> MCPSe
         least one is required, names must be unique and non-empty.
         Template placeholder syntax: {field} (natural width), {field:N}
         (space-padded/truncated to width N), {field:0N} (zero-padded).
-        Available fields: month, day, year (width 2 or 4 only), hours,
+        Available fields: month, month_name (JAN..DEC), day, year (width 2 or 4 only), hours,
         hours12, minutes, ampm, weekday, temperature_f, temperature_c, humidity,
         wind_mph, wind_kmh, wind_deg, wind_dir (compass, e.g. NNE), condition
         (e.g. CLR, RAIN, SNOW, TSTM).

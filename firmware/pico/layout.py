@@ -6,6 +6,7 @@
 # docs/plans/2026-09-16-layout-templates-design.md for the full design.
 
 _WEEKDAY_NAMES = ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
+_MONTH_NAMES = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
 
 _COMPASS = (
     "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
@@ -40,6 +41,10 @@ def _weather_value(weather, key):
 
 def _f_month(lt, weather):
     return lt[1]
+
+
+def _f_month_name(lt, weather):
+    return _MONTH_NAMES[lt[1] - 1]
 
 
 def _f_day(lt, weather):
@@ -133,6 +138,7 @@ def _f_condition(lt, weather):
 # taking precedence over "min_width".
 FIELDS = {
     "month": {"fn": _f_month, "numeric": True, "min_width": 2, "max_natural": 2},
+    "month_name": {"fn": _f_month_name, "numeric": False, "min_width": 3, "max_natural": 3},
     "day": {"fn": _f_day, "numeric": True, "min_width": 2, "max_natural": 2},
     "year": {"fn": _f_year, "numeric": True, "min_width": 2, "max_natural": 4, "widths": (2, 4)},
     "hours": {"fn": _f_hours, "numeric": True, "min_width": 2, "max_natural": 2},

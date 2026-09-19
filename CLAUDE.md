@@ -179,6 +179,7 @@ than the natural value; text fields keep the leftmost characters.
 | Field | Meaning | Min explicit width | Max natural width |
 |---|---|---|---|
 | `month` | 1-12 | 2 | 2 |
+| `month_name` | `JAN`..`DEC` (no zero-pad) | 3 | 3 |
 | `day` | 1-31 | 2 | 2 |
 | `year` | full year; width must be `2` or `4` (omitted = 4) | 2 | 4 |
 | `hours` | 0-23 | 2 | 2 |
