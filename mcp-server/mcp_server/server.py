@@ -132,11 +132,6 @@ def build_server(config: Config, pico_client: PicoClient | None = None) -> MCPSe
         return _translate_errors(pico.set_layout, layout_name)
 
     @mcp.tool()
-    def eight_ball() -> dict:
-        """Show a random Magic 8-Ball style answer on the display."""
-        return _translate_errors(pico.eight_ball)
-
-    @mcp.tool()
     def home() -> dict:
         """Re-home all display modules."""
         return _translate_errors(pico.home)
@@ -196,21 +191,27 @@ def build_server(config: Config, pico_client: PicoClient | None = None) -> MCPSe
 
     @mcp.tool()
     def get_layouts() -> dict:
-        """List saved content layout templates (name, template string, and
-        required display width) and which one is active. A template mixes
-        literal text with placeholders like {hours:02}{minutes:02} — see
+        """List saved content layout templates (name, template string,
+        alignment, and required display width) and which one is active. A
+        template mixes literal text with placeholders like {hours:02}{minutes:02} — see
         save_layouts for the syntax."""
         return _translate_errors(pico.get_layouts)
 
     @mcp.tool()
     def save_layouts(layouts: list[dict], active_layout: str | None = None) -> dict:
         """Replace the whole catalog of content layout templates in one call.
-        layouts is a list of {"name": str, "template": str} objects — at
-        least one is required, names must be unique and non-empty.
+        layouts is a list of {"name": str, "template": str, "align": str}
+        objects — at least one is required, names must be unique and
+        non-empty. align is optional: "left" (default), "center" or "right",
+        and positions the rendered text within each display row when it is
+        shorter than the row (an odd leftover space goes on the right when
+        centering). Omitting align on an existing layout resets it to left.
         Template placeholder syntax: {field} (natural width), {field:N}
         (space-padded/truncated to width N), {field:0N} (zero-padded).
-        Available fields: month, day, year (width 2 or 4 only), hours,
-        hours12, minutes, ampm, weekday, temperature_f, temperature_c.
+        Available fields: month, month_name (JAN..DEC), day, year (width 2 or 4 only), hours,
+        hours12, minutes, ampm, weekday, temperature_f, temperature_c, humidity,
+        wind_mph, wind_kmh, wind_deg, wind_dir (compass, e.g. NNE), condition
+        (e.g. CLR, RAIN, SNOW, TSTM).
         Example: "{month:02}/{day:02}/{year:2} {temperature_f:3}°F".
         active_layout optionally selects which entry becomes active; if
         omitted, the current active layout is kept if still present,

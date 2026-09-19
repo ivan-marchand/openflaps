@@ -1,6 +1,5 @@
 from time import sleep
 import time
-import urandom
 import gc
 from machine import I2C, Pin
 import network
@@ -63,7 +62,7 @@ LON = 0.0
 
 NTP_RETRY_INTERVAL = 300    # seconds between NTP retries on failure
 NTP_SYNC_INTERVAL = 3600    # seconds between successful NTP syncs
-TEMP_UPDATE_INTERVAL = 60   # seconds between outdoor temperature refreshes
+WEATHER_UPDATE_INTERVAL = 60   # seconds between outdoor weather refreshes
 WIFI_CONNECT_TIMEOUT_S = 30 # seconds to wait for saved WiFi creds to connect
                             # before assuming they're stale (network changed,
                             # password rotated, device moved) and falling
@@ -230,10 +229,17 @@ def save_active_layout(name):
         print("Failed to save layout config:", e)
         return False
 
+def _entry_align(entry):
+    # Layouts saved before alignment existed have no "align" key; a
+    # hand-edited config could hold anything. Both fall back to left.
+    align = entry.get("align")
+    return align if align in layout.ALIGNMENTS else "left"
+
 def _rebuild_layout_cache():
-    global layout_tokens_cache, layout_required_width_cache
+    global layout_tokens_cache, layout_required_width_cache, layout_align_cache
     layout_tokens_cache = {}
     layout_required_width_cache = {}
+    layout_align_cache = {}
     for entry in current_layouts:
         try:
             tokens = layout.parse_template(entry["template"])
@@ -242,6 +248,7 @@ def _rebuild_layout_cache():
             continue
         layout_tokens_cache[entry["name"]] = tokens
         layout_required_width_cache[entry["name"]] = layout.required_width(tokens)
+        layout_align_cache[entry["name"]] = _entry_align(entry)
     if not layout_tokens_cache:
         # Every persisted layout failed to parse -- fall back to the
         # always-valid default so the device still boots with something
@@ -250,6 +257,7 @@ def _rebuild_layout_cache():
         tokens = layout.parse_template(fallback["template"])
         layout_tokens_cache[fallback["name"]] = tokens
         layout_required_width_cache[fallback["name"]] = layout.required_width(tokens)
+        layout_align_cache[fallback["name"]] = _entry_align(fallback)
 
 # ----------------------------
 # HTTP helpers (needed by both provisioning and main server)
@@ -598,9 +606,9 @@ def dechunk_http_body(body: bytes) -> bytes:
 
     return b"".join(out)
 
-async def get_outdoor_temp():
+async def get_weather():
     host = "api.open-meteo.com"
-    path = f"/v1/forecast?latitude={LAT}&longitude={LON}&current_weather=true"
+    path = f"/v1/forecast?latitude={LAT}&longitude={LON}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,wind_direction_10m"
 
     try:
         reader, writer = await asyncio.wait_for(asyncio.open_connection(host, 80), 4)
@@ -630,8 +638,14 @@ async def get_outdoor_temp():
         body = dechunk_http_body(response.split(b"\r\n\r\n", 1)[1])
         data = ujson.loads(body)
 
-        temp = data["current_weather"]["temperature"]
-        return temp
+        cur = data["current"]
+        return {
+            "temp_c": cur.get("temperature_2m"),
+            "humidity": cur.get("relative_humidity_2m"),
+            "code": cur.get("weather_code"),
+            "wind_kmh": cur.get("wind_speed_10m"),
+            "wind_deg": cur.get("wind_direction_10m"),
+        }
 
     except Exception as e:
         print("Weather error:", e)
@@ -665,6 +679,15 @@ def get_module_addresses():
         module_addresses.append(address)
         address += 1
     return module_addresses
+
+def row_lengths_for(count):
+    # Physical row sizes for `count` modules under the current char_per_row
+    # (last row may be shorter); <= 0 means one row spanning every module.
+    # Mirrors the row split print_string() does on the module addresses.
+    row_width = char_per_row if char_per_row > 0 else count
+    if row_width <= 0:
+        return []
+    return [min(row_width, count - i) for i in range(0, count, row_width)]
 
 async def print_string(s: str, keep_energized=False):
     # keep_energized: bool, or a list/tuple of one bool per character of s.
@@ -789,18 +812,6 @@ def update_module_params(address, speed, offset, new_address):
     except Exception as e:
         print("Failed to update module {}: {}".format(hex(address), e))
         return False
-
-EIGHTBALL_4 = [
-    "YES ", "NO  ", "YEP ", "NAH ",
-    "MAYB", "SURE", "OKAY", "IDK ",
-    "ASK ", "L8TR", "WAIT", "HMMM",
-    "GOOD", "BADD", "SAFE", "RISK",
-]
-
-async def eightball_roll():
-    ans = EIGHTBALL_4[urandom.getrandbits(8) % len(EIGHTBALL_4)]
-    await print_string(ans)
-    return ans
 
 # ----------------------------
 # Claude API
@@ -933,29 +944,37 @@ mode = MODE_LAYOUT
 last_text = ""
 status_line = "Ready."
 minutes = None
-last_temp_update = 0
-last_temp_c = None
+last_weather_update = 0
+last_weather = None
 
 current_layouts = DEFAULT_LAYOUTS
 active_layout_name = DEFAULT_ACTIVE_LAYOUT
 layout_tokens_cache = {}
 layout_required_width_cache = {}
+layout_align_cache = {}
 
 async def render_active_layout():
-    global last_text, minutes, last_temp_update, last_temp_c
+    global last_text, minutes, last_weather_update, last_weather
     lt = time.localtime(time.time() + tz.get_offset(current_timezone))
     minutes = lt[4]
     tokens = layout_tokens_cache[active_layout_name]
-    temp_c = last_temp_c
-    if layout.uses_temperature(tokens) and time.time() - last_temp_update >= TEMP_UPDATE_INTERVAL:
-        last_temp_update = time.time()
-        fetched = await get_outdoor_temp()
+    weather = last_weather
+    if layout.uses_weather(tokens) and time.time() - last_weather_update >= WEATHER_UPDATE_INTERVAL:
+        last_weather_update = time.time()
+        fetched = await get_weather()
         if fetched is not None:
-            last_temp_c = fetched
-            temp_c = fetched
-    text, keep_energized = layout.render(tokens, lt, temp_c)
-    last_text = text
+            last_weather = fetched
+            weather = fetched
+    text, keep_energized = layout.render(tokens, lt, weather)
     async with mutation_lock:
+        # Alignment needs the real module count, and that's an I2C read, so
+        # it happens under the lock. last_text is set to the aligned text
+        # (before the slow dispatch) so the UI preview matches the display.
+        row_lengths = row_lengths_for(len(get_module_addresses()))
+        text, keep_energized = layout.align_rows(
+            text, keep_energized, row_lengths, layout_align_cache[active_layout_name]
+        )
+        last_text = text
         await print_string(text, keep_energized=keep_energized)
 
 # Onboard LED status tracking (see update_led()): i2c_ok is re-checked
@@ -1292,7 +1311,7 @@ async def handle_firmware_update(conn, header_bytes, body_prefix):
 # Request handler
 # ----------------------------
 async def handle_request(conn):
-    global mode, last_text, status_line, current_timezone, minutes, last_temp_update
+    global mode, last_text, status_line, current_timezone, minutes, last_weather_update
     try:
         header_bytes, body_prefix = await async_read_http_headers(conn)
         if not header_bytes:
@@ -1369,19 +1388,12 @@ async def handle_request(conn):
                             return
                         save_active_layout(requested)
                 mode = MODE_LAYOUT
-                last_temp_update = 0
+                last_weather_update = 0
                 await render_active_layout()
                 status_line = "Switched to {}".format(active_layout_name)
                 await async_http_send_json(conn, {"ok": True, "status": status_line})
             else:
                 await async_http_send_json(conn, {"ok": False, "error": "Unknown mode."}, code="400 Bad Request")
-
-        elif route == "/api/8ball" and method == "POST":
-            async with mutation_lock:
-                last_text = await eightball_roll()
-            mode = MODE_TEXT
-            status_line = "Shaking..."
-            await async_http_send_json(conn, {"ok": True, "text": last_text, "status": status_line})
 
         elif route == "/api/home" and method == "POST":
             async with mutation_lock:
@@ -1543,6 +1555,7 @@ async def handle_request(conn):
                     {
                         "name": entry["name"],
                         "template": entry["template"],
+                        "align": layout_align_cache[entry["name"]],
                         "required_width": layout_required_width_cache[entry["name"]],
                     }
                     for entry in current_layouts
@@ -1567,8 +1580,12 @@ async def handle_request(conn):
                 template = entry.get("template") if isinstance(entry, dict) else None
                 if not isinstance(template, str):
                     template = ""
+                align = entry.get("align", "left") if isinstance(entry, dict) else "left"
                 if not name:
                     await async_http_send_json(conn, {"ok": False, "error": "Layout name cannot be empty."}, code="400 Bad Request")
+                    return
+                if align not in layout.ALIGNMENTS:
+                    await async_http_send_json(conn, {"ok": False, "error": "Layout '{}': align must be one of {}".format(name, ", ".join(layout.ALIGNMENTS))}, code="400 Bad Request")
                     return
                 if name in names:
                     await async_http_send_json(conn, {"ok": False, "error": "Duplicate layout name: {}".format(name)}, code="400 Bad Request")
@@ -1579,7 +1596,7 @@ async def handle_request(conn):
                     await async_http_send_json(conn, {"ok": False, "error": "Layout '{}': {}".format(name, e)}, code="400 Bad Request")
                     return
                 names.append(name)
-                clean_layouts.append({"name": name, "template": template})
+                clean_layouts.append({"name": name, "template": template, "align": align})
 
             if new_active is not None and new_active not in names:
                 await async_http_send_json(conn, {"ok": False, "error": "active_layout must name one of the posted layouts."}, code="400 Bad Request")
@@ -1671,7 +1688,7 @@ async def tick():
         lt = time.localtime(now + tz.get_offset(current_timezone))
         current_minutes = lt[4]
         needs_render = current_minutes != minutes
-        if layout.uses_temperature(tokens) and now - last_temp_update >= TEMP_UPDATE_INTERVAL:
+        if layout.uses_weather(tokens) and now - last_weather_update >= WEATHER_UPDATE_INTERVAL:
             needs_render = True
         if needs_render:
             await render_active_layout()

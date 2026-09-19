@@ -104,7 +104,6 @@ export function ControlPage() {
                 <option key={l.name} value={l.name}>{l.name}</option>
               ))}
           </select>
-          <button class="btn" disabled={busy} onClick={() => withBusy(() => api.eightBall().then(r => { if(r.ok) setState(s=>({...s, text:r.text, status:r.status})); return r }))}>8-BALL</button>
           <button class="btn" disabled={busy} onClick={() => withBusy(() => api.home().then(r => { if(r.ok) setState(s=>({...s, status:r.status})); return r }))}>ERASE</button>
         </div>
       </div>
