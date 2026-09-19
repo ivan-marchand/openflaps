@@ -218,13 +218,12 @@ export function SetupPage() {
         <div class="field-label">Layouts</div>
         <form onSubmit={saveLayouts}>
           {layoutRows.map((row, i) => (
-            <div class="input-row" style="margin-bottom:8px;" key={i}>
+            <div class="input-row layout-row" style="margin-bottom:8px;" key={i}>
               <input
                 type="text"
                 placeholder="Name"
                 value={row.name}
                 onInput={e => updateLayoutRow(i, 'name', e.target.value)}
-                style="max-width:120px;"
               />
               <input
                 type="text"
