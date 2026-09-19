@@ -240,7 +240,8 @@ export function SetupPage() {
           </div>
           <div style="margin-bottom:10px;font-size:0.85em;opacity:0.7;">
             Fields: month, day, year, hours, hours12, minutes, ampm, weekday,
-            temperature_f, temperature_c. Use {'{field}'} for natural width,
+            temperature_f, temperature_c, humidity, wind_mph, wind_kmh, wind_deg,
+            wind_dir, condition. Use {'{field}'} for natural width,
             {'{field:N}'} to space-pad/truncate, {'{field:0N}'} to zero-pad/truncate.
           </div>
           <button class="btn" type="submit" disabled={busy || layoutRows.length === 0}>SAVE LAYOUTS</button>

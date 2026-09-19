@@ -62,7 +62,7 @@ LON = -71.3642
 
 NTP_RETRY_INTERVAL = 300    # seconds between NTP retries on failure
 NTP_SYNC_INTERVAL = 3600    # seconds between successful NTP syncs
-TEMP_UPDATE_INTERVAL = 60   # seconds between outdoor temperature refreshes
+WEATHER_UPDATE_INTERVAL = 60   # seconds between outdoor weather refreshes
 WIFI_CONNECT_TIMEOUT_S = 30 # seconds to wait for saved WiFi creds to connect
                             # before assuming they're stale (network changed,
                             # password rotated, device moved) and falling
@@ -597,9 +597,9 @@ def dechunk_http_body(body: bytes) -> bytes:
 
     return b"".join(out)
 
-async def get_outdoor_temp():
+async def get_weather():
     host = "api.open-meteo.com"
-    path = f"/v1/forecast?latitude={LAT}&longitude={LON}&current_weather=true"
+    path = f"/v1/forecast?latitude={LAT}&longitude={LON}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,wind_direction_10m"
 
     try:
         reader, writer = await asyncio.wait_for(asyncio.open_connection(host, 80), 4)
@@ -629,8 +629,14 @@ async def get_outdoor_temp():
         body = dechunk_http_body(response.split(b"\r\n\r\n", 1)[1])
         data = ujson.loads(body)
 
-        temp = data["current_weather"]["temperature"]
-        return temp
+        cur = data["current"]
+        return {
+            "temp_c": cur.get("temperature_2m"),
+            "humidity": cur.get("relative_humidity_2m"),
+            "code": cur.get("weather_code"),
+            "wind_kmh": cur.get("wind_speed_10m"),
+            "wind_deg": cur.get("wind_direction_10m"),
+        }
 
     except Exception as e:
         print("Weather error:", e)
@@ -920,8 +926,8 @@ mode = MODE_LAYOUT
 last_text = ""
 status_line = "Ready."
 minutes = None
-last_temp_update = 0
-last_temp_c = None
+last_weather_update = 0
+last_weather = None
 
 current_layouts = DEFAULT_LAYOUTS
 active_layout_name = DEFAULT_ACTIVE_LAYOUT
@@ -929,18 +935,18 @@ layout_tokens_cache = {}
 layout_required_width_cache = {}
 
 async def render_active_layout():
-    global last_text, minutes, last_temp_update, last_temp_c
+    global last_text, minutes, last_weather_update, last_weather
     lt = time.localtime(time.time() + tz.get_offset(current_timezone))
     minutes = lt[4]
     tokens = layout_tokens_cache[active_layout_name]
-    temp_c = last_temp_c
-    if layout.uses_temperature(tokens) and time.time() - last_temp_update >= TEMP_UPDATE_INTERVAL:
-        last_temp_update = time.time()
-        fetched = await get_outdoor_temp()
+    weather = last_weather
+    if layout.uses_weather(tokens) and time.time() - last_weather_update >= WEATHER_UPDATE_INTERVAL:
+        last_weather_update = time.time()
+        fetched = await get_weather()
         if fetched is not None:
-            last_temp_c = fetched
-            temp_c = fetched
-    text, keep_energized = layout.render(tokens, lt, temp_c)
+            last_weather = fetched
+            weather = fetched
+    text, keep_energized = layout.render(tokens, lt, weather)
     last_text = text
     async with mutation_lock:
         await print_string(text, keep_energized=keep_energized)
@@ -1279,7 +1285,7 @@ async def handle_firmware_update(conn, header_bytes, body_prefix):
 # Request handler
 # ----------------------------
 async def handle_request(conn):
-    global mode, last_text, status_line, current_timezone, minutes, last_temp_update
+    global mode, last_text, status_line, current_timezone, minutes, last_weather_update
     try:
         header_bytes, body_prefix = await async_read_http_headers(conn)
         if not header_bytes:
@@ -1356,7 +1362,7 @@ async def handle_request(conn):
                             return
                         save_active_layout(requested)
                 mode = MODE_LAYOUT
-                last_temp_update = 0
+                last_weather_update = 0
                 await render_active_layout()
                 status_line = "Switched to {}".format(active_layout_name)
                 await async_http_send_json(conn, {"ok": True, "status": status_line})
@@ -1651,7 +1657,7 @@ async def tick():
         lt = time.localtime(now + tz.get_offset(current_timezone))
         current_minutes = lt[4]
         needs_render = current_minutes != minutes
-        if layout.uses_temperature(tokens) and now - last_temp_update >= TEMP_UPDATE_INTERVAL:
+        if layout.uses_weather(tokens) and now - last_weather_update >= WEATHER_UPDATE_INTERVAL:
             needs_render = True
         if needs_render:
             await render_active_layout()

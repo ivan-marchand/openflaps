@@ -7,54 +7,128 @@
 
 _WEEKDAY_NAMES = ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
 
+_COMPASS = (
+    "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+    "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
+)
 
-def _f_month(lt, temp_c):
+# WMO weather interpretation codes (what Open-Meteo's `weather_code` returns)
+# collapsed to <= 4 characters from the display charset. A code not listed
+# here renders as dashes, same as a missing reading.
+_CONDITIONS = {
+    0: "CLR", 1: "CLR", 2: "PCLD", 3: "CLD",
+    45: "FOG", 48: "FOG",
+    51: "DRZL", 53: "DRZL", 55: "DRZL",
+    56: "ICE", 57: "ICE",
+    61: "RAIN", 63: "RAIN", 65: "RAIN",
+    66: "ICE", 67: "ICE",
+    71: "SNOW", 73: "SNOW", 75: "SNOW", 77: "SNOW",
+    80: "SHWR", 81: "SHWR", 82: "SHWR",
+    85: "SNOW", 86: "SNOW",
+    95: "TSTM", 96: "TSTM", 99: "TSTM",
+}
+
+
+def _weather_value(weather, key):
+    # weather is the dict main.py's get_weather() returns (None until the
+    # first successful fetch); individual keys can also be None if the API
+    # omitted that reading.
+    if weather is None:
+        return None
+    return weather.get(key)
+
+
+def _f_month(lt, weather):
     return lt[1]
 
 
-def _f_day(lt, temp_c):
+def _f_day(lt, weather):
     return lt[2]
 
 
-def _f_year(lt, temp_c):
+def _f_year(lt, weather):
     return lt[0]
 
 
-def _f_hours(lt, temp_c):
+def _f_hours(lt, weather):
     return lt[3]
 
 
-def _f_hours12(lt, temp_c):
+def _f_hours12(lt, weather):
     h = lt[3] % 12
     return 12 if h == 0 else h
 
 
-def _f_minutes(lt, temp_c):
+def _f_minutes(lt, weather):
     return lt[4]
 
 
-def _f_ampm(lt, temp_c):
+def _f_ampm(lt, weather):
     return "PM" if lt[3] >= 12 else "AM"
 
 
-def _f_weekday(lt, temp_c):
+def _f_weekday(lt, weather):
     return _WEEKDAY_NAMES[lt[6]]
 
 
-def _f_temperature_f(lt, temp_c):
+def _f_temperature_f(lt, weather):
+    temp_c = _weather_value(weather, "temp_c")
     if temp_c is None:
         return None
     return int(round(32 + temp_c * 9 / 5))
 
 
-def _f_temperature_c(lt, temp_c):
+def _f_temperature_c(lt, weather):
+    temp_c = _weather_value(weather, "temp_c")
     if temp_c is None:
         return None
     return int(round(temp_c))
 
 
-# Each descriptor: fn(localtime, temp_c) -> raw value (int for numeric
-# fields and possibly None for temperature fields; str for text fields).
+def _f_humidity(lt, weather):
+    humidity = _weather_value(weather, "humidity")
+    if humidity is None:
+        return None
+    return int(round(humidity))
+
+
+def _f_wind_mph(lt, weather):
+    wind_kmh = _weather_value(weather, "wind_kmh")
+    if wind_kmh is None:
+        return None
+    return int(round(wind_kmh * 0.621371))
+
+
+def _f_wind_kmh(lt, weather):
+    wind_kmh = _weather_value(weather, "wind_kmh")
+    if wind_kmh is None:
+        return None
+    return int(round(wind_kmh))
+
+
+def _f_wind_deg(lt, weather):
+    deg = _weather_value(weather, "wind_deg")
+    if deg is None:
+        return None
+    return int(round(deg)) % 360
+
+
+def _f_wind_dir(lt, weather):
+    deg = _weather_value(weather, "wind_deg")
+    if deg is None:
+        return None
+    return _COMPASS[int((deg + 11.25) / 22.5) % 16]
+
+
+def _f_condition(lt, weather):
+    code = _weather_value(weather, "code")
+    if code is None:
+        return None
+    return _CONDITIONS.get(code)
+
+
+# Each descriptor: fn(localtime, weather) -> raw value (int for numeric
+# fields, str for text fields; None for a weather field with no reading yet).
 # "widths" (only on `year`) restricts explicit widths to that exact set,
 # taking precedence over "min_width".
 FIELDS = {
@@ -68,6 +142,12 @@ FIELDS = {
     "weekday": {"fn": _f_weekday, "numeric": False, "min_width": 3, "max_natural": 3},
     "temperature_f": {"fn": _f_temperature_f, "numeric": True, "min_width": 2, "max_natural": 3},
     "temperature_c": {"fn": _f_temperature_c, "numeric": True, "min_width": 2, "max_natural": 3},
+    "humidity": {"fn": _f_humidity, "numeric": True, "min_width": 2, "max_natural": 3},
+    "wind_mph": {"fn": _f_wind_mph, "numeric": True, "min_width": 2, "max_natural": 3},
+    "wind_kmh": {"fn": _f_wind_kmh, "numeric": True, "min_width": 2, "max_natural": 3},
+    "wind_deg": {"fn": _f_wind_deg, "numeric": True, "min_width": 2, "max_natural": 3},
+    "wind_dir": {"fn": _f_wind_dir, "numeric": False, "min_width": 2, "max_natural": 3},
+    "condition": {"fn": _f_condition, "numeric": False, "min_width": 3, "max_natural": 4},
 }
 
 
@@ -131,11 +211,14 @@ def parse_template(template):
     return tokens
 
 
-_TEMPERATURE_FIELDS = ("temperature_f", "temperature_c")
+_WEATHER_FIELDS = (
+    "temperature_f", "temperature_c", "humidity", "wind_mph", "wind_kmh",
+    "wind_deg", "wind_dir", "condition",
+)
 
 
-def uses_temperature(tokens):
-    return any(t[0] == "field" and t[1] in _TEMPERATURE_FIELDS for t in tokens)
+def uses_weather(tokens):
+    return any(t[0] == "field" and t[1] in _WEATHER_FIELDS for t in tokens)
 
 
 def required_width(tokens):
@@ -175,7 +258,7 @@ def _render_text(raw, width):
     return raw
 
 
-def render(tokens, localtime, temp_c):
+def render(tokens, localtime, weather):
     text = ""
     keep_energized = []
     for token in tokens:
@@ -187,10 +270,10 @@ def render(tokens, localtime, temp_c):
 
         _, name, width, zero_pad = token
         field = FIELDS[name]
-        raw = field["fn"](localtime, temp_c)
+        raw = field["fn"](localtime, weather)
 
         if raw is None:
-            # Only temperature fields return None (no reading yet).
+            # Only weather fields return None (no reading yet).
             rendered = "-" * (width if width is not None else 3)
         elif field["numeric"]:
             rendered = _render_numeric(raw, width, zero_pad)

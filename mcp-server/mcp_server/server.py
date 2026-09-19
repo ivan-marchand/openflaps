@@ -205,7 +205,9 @@ def build_server(config: Config, pico_client: PicoClient | None = None) -> MCPSe
         Template placeholder syntax: {field} (natural width), {field:N}
         (space-padded/truncated to width N), {field:0N} (zero-padded).
         Available fields: month, day, year (width 2 or 4 only), hours,
-        hours12, minutes, ampm, weekday, temperature_f, temperature_c.
+        hours12, minutes, ampm, weekday, temperature_f, temperature_c, humidity,
+        wind_mph, wind_kmh, wind_deg, wind_dir (compass, e.g. NNE), condition
+        (e.g. CLR, RAIN, SNOW, TSTM).
         Example: "{month:02}/{day:02}/{year:2} {temperature_f:3}°F".
         active_layout optionally selects which entry becomes active; if
         omitted, the current active layout is kept if still present,
