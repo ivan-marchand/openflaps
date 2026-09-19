@@ -43,7 +43,9 @@ cp frontend/dist/assets/index.js firmware/pico/assets/index.js
 cp frontend/dist/assets/index.css firmware/pico/assets/index.css
 ```
 
-Or just run `./firmware/pico/deploy.sh` which builds, copies, and uploads everything.
+`npm run build` already does that copy step itself (its `copy` script). Note that
+`./firmware/pico/deploy.sh` does **not** build the frontend — it only uploads what is
+already in `firmware/pico/` — so run `npm run build` first or the device gets stale UI assets.
 
 **Hash routing:**
 - `/#/` — ControlPage (set text, change mode)
