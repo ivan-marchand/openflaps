@@ -92,7 +92,7 @@ Config is stored in JSON files on Pico flash — all are gitignored:
 - `api_config.json` — `{"key": "sk-ant-..."}` — Claude API key
 - `timezone_config.json` — `{"zone": "America/New_York"}` — IANA timezone name
 - `max_concurrent_modules_config.json` — `{"max_concurrent": 4}` — max modules allowed to move simultaneously. Renamed from `energy_config.json`; `load_max_concurrent()` migrates an existing device's old file to the new name on first boot after the rename, then deletes the old one.
-- `layout_config.json` — `{"char_per_row": -1, "layouts": [{"name": "Clock", "template": "{hours:02}{minutes:02}"}], "active_layout": "Clock"}` — `char_per_row`: modules per physical row (`-1` = single row spanning every detected module); `layouts`: the named template catalog (always ≥1 entry); `active_layout`: which one is currently live (always names an entry in `layouts`)
+- `layout_config.json` — `{"char_per_row": -1, "layouts": [{"name": "Clock", "template": "{hours:02}{minutes:02}", "align": "left"}], "active_layout": "Clock"}` — `char_per_row`: modules per physical row (`-1` = single row spanning every detected module); `layouts`: the named template catalog (always ≥1 entry; `align` is `left`/`center`/`right`, and a missing or unrecognized value means `left`); `active_layout`: which one is currently live (always names an entry in `layouts`)
 
 Constants in `main.py`:
 - `BASE_ADDR = 0x11` — First I2C device address (0x10 is reserved for pairing mode). Modules are wired right-to-left, so `BASE_ADDR` is the rightmost character and address increases leftward.
@@ -220,6 +220,25 @@ reading succeeds, a later failed refetch just keeps showing the last
 known values rather than reverting to dashes. A single reading the API
 omits, or a weather code with no text mapping, renders as dashes the same
 way.
+
+**Alignment.** Each layout has an `align` of `left` (default), `center` or
+`right`, set per layout on SetupPage's "Layouts" card and via the
+`align` key on `POST /api/layouts` (an unrecognized value is rejected at
+save time). It positions the rendered text within each physical row when the
+text is shorter than the row, so a layout keeps its position on displays of
+different sizes without hand-padding the template. `render_active_layout()`
+does it under `mutation_lock`, after `layout.render()` and before dispatch:
+it reads the live module count, builds the physical row sizes with
+`row_lengths_for()` (the same `char_per_row` split `print_string()` uses), and
+calls `layout.align_rows()`, which hard-wraps the text into row-sized chunks
+and aligns each chunk in its row. A chunk that already fills its row is
+untouched, so a 2-row text aligns its short last chunk; centering an odd gap
+puts the extra space on the right; the `keep_energized` mask shifts with the
+text. `last_text` (and so the UI preview) is set to the aligned text. Natural
+width fields (`{hours12}`, `{day}`) are what make alignment visible, since a
+field padded with `{field:N}` already fills its width with spaces. Only layouts
+are aligned; text set by the user, Claude responses and other static text stay
+left-aligned.
 
 Display width is auto-detected: `get_module_addresses()` walks `i2c.scan()` results from `BASE_ADDR` upward to find the contiguous module count (also returned as `module_count` by `GET /api/state` / `GET /api/layout`, and used to size the frontend's text input and Claude's target length — nothing is hardcoded to 4 characters anymore). `print_string(s)` left-aligns/hard-wraps `s` to that count, then reverses each row before assigning to addresses in increasing order, since modules are wired right-to-left within a row (`BASE_ADDR` is the rightmost character of the first row). Modules are dispatched leftmost (highest address) first, like natural left-to-right writing.
 

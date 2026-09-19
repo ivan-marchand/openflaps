@@ -5,6 +5,8 @@
 # in the width digits selects zero-padding). See
 # docs/plans/2026-09-16-layout-templates-design.md for the full design.
 
+ALIGNMENTS = ("left", "center", "right")
+
 _WEEKDAY_NAMES = ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
 _MONTH_NAMES = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
 
@@ -252,3 +254,35 @@ def render(tokens, localtime, weather):
         keep_energized.extend(mask)
 
     return text, keep_energized
+
+
+def align_rows(text, flags, row_lengths, align):
+    # Lay `text` (and its per-character keep_energized `flags`) out over
+    # physical rows of the given lengths, one row-sized chunk of text per
+    # row -- the same hard wrap print_string() applies -- and place each
+    # chunk within its row per `align`. A chunk that already fills its row is
+    # untouched; only a short one (the whole text on a single row, or the
+    # last chunk of a wrapped text) gets padded. Centering an odd gap puts
+    # the extra space on the right. Padding spaces get a False flag. Text
+    # beyond the total row capacity is dropped, and with no rows at all (no
+    # modules detected) the text is returned as is.
+    if not row_lengths:
+        return text, flags
+    out_text = ""
+    out_flags = []
+    idx = 0
+    for n in row_lengths:
+        chunk = text[idx:idx + n]
+        chunk_flags = list(flags[idx:idx + len(chunk)])
+        idx += n
+        gap = n - len(chunk)
+        if align == "right":
+            left = gap
+        elif align == "center":
+            left = gap // 2
+        else:
+            left = 0
+        right = gap - left
+        out_text += " " * left + chunk + " " * right
+        out_flags.extend([False] * left + chunk_flags + [False] * right)
+    return out_text, out_flags
