@@ -8,6 +8,7 @@ import ntptime
 import socket
 import sys
 import ujson
+import uasyncio as asyncio
 import tz
 import layout
 
@@ -18,7 +19,8 @@ import layout
 CONFIG_FILE = "wifi_config.json"
 API_CONFIG_FILE = "api_config.json"
 TIMEZONE_CONFIG_FILE = "timezone_config.json"
-ENERGY_CONFIG_FILE = "energy_config.json"
+MAX_CONCURRENT_MODULES_CONFIG_FILE = "max_concurrent_modules_config.json"
+_LEGACY_ENERGY_CONFIG_FILE = "energy_config.json"  # pre-rename filename; migrated on first load, then removed
 LAYOUT_CONFIG_FILE = "layout_config.json"
 
 DEFAULT_MAX_CONCURRENT_MODULES = 4  # matches display width -> no limiting by default
@@ -37,6 +39,16 @@ BASE_ADDR = 0x11   # first character module address
 # off, even if the target position equals the current one) -- see
 # split_flap_controller.h. Cleared by home_all() since homing invalidates it.
 last_displayed_chars = {}
+
+# Serializes anything touching the I2C bus (reads and writes -- the bus is a
+# single shared physical resource, so even a status *read* must not run
+# concurrently with a display *write*) or writing a persistent config file.
+# Acquired for the duration of each such operation; a second request that
+# needs it simply waits its turn (asyncio.Lock queues FIFO), no busy/409
+# error. Declared here (module scope, before any route handler references
+# it) rather than inside main(), since handle_request/tick()/
+# handle_firmware_update all need to reference the same lock instance.
+mutation_lock = asyncio.Lock()
 
 # Onboard status LED. On the Pico W this is actually wired through the
 # CYW43 wifi chip rather than a plain GPIO, but MicroPython's Pin("LED", ...)
@@ -115,20 +127,34 @@ def save_timezone(zone):
 
 def load_max_concurrent():
     try:
-        with open(ENERGY_CONFIG_FILE, "r") as f:
+        with open(MAX_CONCURRENT_MODULES_CONFIG_FILE, "r") as f:
             return int(ujson.load(f).get("max_concurrent", DEFAULT_MAX_CONCURRENT_MODULES))
-    except:
+    except Exception:
+        pass
+    # One-time migration from the pre-rename "energy" config filename, so an
+    # already-deployed device doesn't silently lose its saved setting.
+    try:
+        with open(_LEGACY_ENERGY_CONFIG_FILE, "r") as f:
+            value = int(ujson.load(f).get("max_concurrent", DEFAULT_MAX_CONCURRENT_MODULES))
+    except Exception:
         return DEFAULT_MAX_CONCURRENT_MODULES
+    save_max_concurrent(value)
+    try:
+        import os
+        os.remove(_LEGACY_ENERGY_CONFIG_FILE)
+    except Exception:
+        pass
+    return value
 
 def save_max_concurrent(value):
     global max_concurrent_modules
     try:
-        with open(ENERGY_CONFIG_FILE, "w") as f:
+        with open(MAX_CONCURRENT_MODULES_CONFIG_FILE, "w") as f:
             ujson.dump({"max_concurrent": value}, f)
         max_concurrent_modules = value
         return True
     except Exception as e:
-        print("Failed to save energy config:", e)
+        print("Failed to save max-concurrent-modules config:", e)
         return False
 
 def _load_layout_config():
@@ -258,13 +284,6 @@ def http_send(conn, body, code="200 OK", content_type="text/html"):
     conn.send("Connection: close\r\n\r\n")
     conn.sendall(body)
 
-def http_send_json(conn, data, code="200 OK"):
-    body = ujson.dumps(data)
-    conn.send("HTTP/1.1 {}\r\n".format(code))
-    conn.send("Content-Type: application/json\r\n")
-    conn.send("Connection: close\r\n\r\n")
-    conn.sendall(body)
-
 def read_http_headers(conn, max_bytes=4096):
     # Raw bytes, no decoding -- binary-body endpoints must use this instead of
     # read_http_request(), whose UTF-8 decode would corrupt binary data.
@@ -282,6 +301,110 @@ def read_http_headers(conn, max_bytes=4096):
         pass
     header_bytes, sep, body_bytes = data.partition(b"\r\n\r\n")
     return header_bytes, (body_bytes if sep else b"")
+
+class AsyncConn:
+    """Async-stream wrapper exposing the same conn.recv/send/sendall/
+    settimeout/close interface the existing HTTP route-dispatch code
+    already calls -- so converting handle_request/handle_firmware_update
+    to async only needs `await` added at each I/O call site, with zero
+    changes to route-matching or response-building logic.
+    """
+    def __init__(self, reader, writer):
+        self.reader = reader
+        self.writer = writer
+        self._timeout = None
+
+    def settimeout(self, seconds):
+        self._timeout = seconds
+
+    async def recv(self, n):
+        coro = self.reader.read(n)
+        if self._timeout is not None:
+            try:
+                return await asyncio.wait_for(coro, self._timeout)
+            except asyncio.TimeoutError:
+                return b""
+        return await coro
+
+    async def send(self, data):
+        if isinstance(data, str):
+            data = data.encode("utf-8")
+        self.writer.write(data)
+        await self.writer.drain()
+
+    async def sendall(self, data):
+        await self.send(data)
+
+    async def close(self):
+        self.writer.close()
+        try:
+            await self.writer.wait_closed()
+        except AttributeError:
+            pass
+
+
+async def async_http_send(conn, body, code="200 OK", content_type="text/html"):
+    await conn.send("HTTP/1.1 {}\r\n".format(code))
+    await conn.send("Content-Type: {}\r\n".format(content_type))
+    await conn.send("Connection: close\r\n\r\n")
+    await conn.sendall(body)
+
+async def async_http_send_json(conn, data, code="200 OK"):
+    body = ujson.dumps(data)
+    await conn.send("HTTP/1.1 {}\r\n".format(code))
+    await conn.send("Content-Type: application/json\r\n")
+    await conn.send("Connection: close\r\n\r\n")
+    await conn.sendall(body)
+
+async def async_read_http_headers(conn, max_bytes=4096):
+    conn.settimeout(0.25)
+    data = b""
+    try:
+        while len(data) < max_bytes:
+            chunk = await conn.recv(512)
+            if not chunk:
+                break
+            data += chunk
+            if b"\r\n\r\n" in data:
+                break
+    except OSError:
+        pass
+    header_bytes, sep, body_bytes = data.partition(b"\r\n\r\n")
+    return header_bytes, (body_bytes if sep else b"")
+
+# Streamed in fixed-size chunks rather than one f.read(), for the same
+# reason the OTA unpack path is (see _ZIP_CHUNK_SIZE): a whole-file read
+# plus the send-side copy is a large contiguous allocation, and the async
+# server can now have several asset fetches (index.html + index.js +
+# index.css on a single page load) plus the 1s /api/state poll in flight
+# at once, multiplying that peak on a heap that has historically failed
+# such allocations unpredictably depending on fragmentation.
+_SEND_FILE_CHUNK_SIZE = 512
+
+async def async_http_send_file(conn, filepath):
+    ext = filepath.rsplit(".", 1)[-1] if "." in filepath else "txt"
+    content_type = MIME_TYPES.get(ext, "text/plain")
+    # Only a missing/unopenable file gets the 404 path. Once headers are
+    # sent below, a later read failure must NOT try to send a second
+    # response -- that would inject a "404 Not Found" string into the
+    # middle of an already-committed 200 body (e.g. if a concurrent OTA
+    # update replaces/deletes this exact file mid-stream).
+    try:
+        # "rb" (not "r"): chunked reads need exact byte counts, and
+        # conn.send/sendall already accept raw bytes.
+        f = open(filepath, "rb")
+    except OSError:
+        await async_http_send(conn, "Not found", code="404 Not Found", content_type="text/plain")
+        return
+    with f:
+        await conn.send("HTTP/1.1 200 OK\r\n")
+        await conn.send("Content-Type: {}\r\n".format(content_type))
+        await conn.send("Connection: close\r\n\r\n")
+        while True:
+            chunk = f.read(_SEND_FILE_CHUNK_SIZE)
+            if not chunk:
+                break
+            await conn.sendall(chunk)
 
 def parse_content_length(header_bytes):
     for line in header_bytes.split(b"\r\n"):
@@ -326,19 +449,6 @@ MIME_TYPES = {
     "json": "application/json",
     "ico":  "image/x-icon",
 }
-
-def http_send_file(conn, filepath):
-    ext = filepath.rsplit(".", 1)[-1] if "." in filepath else "txt"
-    content_type = MIME_TYPES.get(ext, "text/plain")
-    try:
-        with open(filepath, "r") as f:
-            body = f.read()
-        conn.send("HTTP/1.1 200 OK\r\n")
-        conn.send("Content-Type: {}\r\n".format(content_type))
-        conn.send("Connection: close\r\n\r\n")
-        conn.sendall(body)
-    except OSError:
-        http_send(conn, "Not found", code="404 Not Found", content_type="text/plain")
 
 def parse_json_body(req):
     if "\r\n\r\n" not in req:
@@ -405,7 +515,7 @@ def start_ap_provisioning():
     # modules answer on I2C. Left de-energized (default) since this may
     # sit for a while until someone notices and reconfigures.
     try:
-        print_string("AP")
+        asyncio.run(print_string("AP"))
     except Exception as e:
         print("Could not display AP status:", e)
 
@@ -488,15 +598,12 @@ def dechunk_http_body(body: bytes) -> bytes:
 
     return b"".join(out)
 
-def get_outdoor_temp():
+async def get_outdoor_temp():
     host = "api.open-meteo.com"
     path = f"/v1/forecast?latitude={LAT}&longitude={LON}&current_weather=true"
 
     try:
-        addr = socket.getaddrinfo(host, 80)[0][-1]
-        s = socket.socket()
-        s.settimeout(4)
-        s.connect(addr)
+        reader, writer = await asyncio.wait_for(asyncio.open_connection(host, 80), 4)
 
         request = (
             "GET {} HTTP/1.1\r\n"
@@ -504,16 +611,21 @@ def get_outdoor_temp():
             "Connection: close\r\n\r\n"
         ).format(path, host)
 
-        s.send(request.encode())
+        writer.write(request.encode())
+        await writer.drain()
 
         response = b""
         while True:
-            chunk = s.recv(1024)
+            chunk = await asyncio.wait_for(reader.read(1024), 4)
             if not chunk:
                 break
             response += chunk
 
-        s.close()
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except AttributeError:
+            pass
 
         body = dechunk_http_body(response.split(b"\r\n\r\n", 1)[1])
         data = ujson.loads(body)
@@ -554,7 +666,7 @@ def get_module_addresses():
         address += 1
     return module_addresses
 
-def print_string(s: str, keep_energized=False):
+async def print_string(s: str, keep_energized=False):
     # keep_energized: bool, or a list/tuple of one bool per character of s.
     print(f"Displaying: {s}")
     module_addresses = get_module_addresses()
@@ -619,19 +731,20 @@ def print_string(s: str, keep_energized=False):
         while queue and len(in_flight) < limit:
             addr, c, ke = queue.pop(0)
             print_char(addr, c, ke)
-            time.sleep_ms(20)
+            await asyncio.sleep_ms(20)
             in_flight.append(addr)
         if in_flight:
-            time.sleep_ms(20)
+            await asyncio.sleep_ms(20)
             in_flight = [a for a in in_flight if is_module_busy(a)]
 
-def home_all():
+async def home_all():
     global last_displayed_chars
     for address in i2c.scan():
         try:
             i2c.writeto(address, b'I\x00')
         except:
             print(f"Unable Home display {address}")
+        await asyncio.sleep_ms(20)
     last_displayed_chars = {}
 
 def read_module_params(address):
@@ -684,9 +797,9 @@ EIGHTBALL_4 = [
     "GOOD", "BADD", "SAFE", "RISK",
 ]
 
-def eightball_roll():
+async def eightball_roll():
     ans = EIGHTBALL_4[urandom.getrandbits(8) % len(EIGHTBALL_4)]
-    print_string(ans)
+    await print_string(ans)
     return ans
 
 # ----------------------------
@@ -701,9 +814,9 @@ def claude_system_prompt(count):
         "Examples: YES NO COOL IDK NOPE 42.0 RAIN SNOW (padded/truncated to {0} chars)"
     ).format(count)
 
-def call_claude(prompt):
-    import ssl  # inline: ssl is RAM-heavy; defer loading until Claude is actually called
-    count = len(get_module_addresses())
+async def call_claude(prompt):
+    async with mutation_lock:
+        count = len(get_module_addresses())
     if not api_key:
         print("No Claude API key configured")
         return ("ERR" + " " * count)[:count]
@@ -727,23 +840,23 @@ def call_claude(prompt):
     ).format(host, api_key, len(payload))
 
     try:
-        addr = socket.getaddrinfo(host, 443)[0][-1]
-        raw = socket.socket()
-        raw.settimeout(15)
-        raw.connect(addr)
-        sock = ssl.wrap_socket(raw, server_hostname=host)
-        sock.write(headers.encode("utf-8") + payload)
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, 443, ssl=True), 15
+        )
+        writer.write(headers.encode("utf-8") + payload)
+        await writer.drain()
 
         response = b""
         while True:
-            try:
-                chunk = sock.read(1024)
-                if not chunk:
-                    break
-                response += chunk
-            except OSError:
+            chunk = await asyncio.wait_for(reader.read(1024), 15)
+            if not chunk:
                 break
-        sock.close()
+            response += chunk
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except AttributeError:
+            pass
 
         _, _, body = response.partition(b"\r\n\r\n")
         body = dechunk_http_body(body)
@@ -808,15 +921,7 @@ def sync_time():
         print("Error syncing time", e)
         return False
 
-def start_server():
-    addr = socket.getaddrinfo("0.0.0.0", 80)[0][-1]
-    s = socket.socket()
-    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    s.bind(addr)
-    s.listen(1)
-    s.settimeout(0.05)
-    print("HTTP server listening on :80")
-    return s
+# start_server() removed -- replaced by asyncio.start_server() in main()
 
 # ----------------------------
 # App state
@@ -836,7 +941,7 @@ active_layout_name = DEFAULT_ACTIVE_LAYOUT
 layout_tokens_cache = {}
 layout_required_width_cache = {}
 
-def render_active_layout():
+async def render_active_layout():
     global last_text, minutes, last_temp_update, last_temp_c
     lt = time.localtime(time.time() + tz.get_offset(current_timezone))
     minutes = lt[4]
@@ -844,22 +949,34 @@ def render_active_layout():
     temp_c = last_temp_c
     if layout.uses_temperature(tokens) and time.time() - last_temp_update >= TEMP_UPDATE_INTERVAL:
         last_temp_update = time.time()
-        fetched = get_outdoor_temp()
+        fetched = await get_outdoor_temp()
         if fetched is not None:
             last_temp_c = fetched
             temp_c = fetched
     text, keep_energized = layout.render(tokens, lt, temp_c)
     last_text = text
-    print_string(text, keep_energized=keep_energized)
+    async with mutation_lock:
+        await print_string(text, keep_energized=keep_energized)
 
 # Onboard LED status tracking (see update_led()): i2c_ok is re-checked
 # periodically in the background since modules can be plugged in/out or
 # drop off after boot; wifi_ok is cheap enough (wlan.isconnected()) to
 # just check every call.
+#
+# cached_module_count rides along on that same periodic recheck so status
+# polls (GET /api/state, GET /api/layout) can report the module count from
+# memory without touching the I2C bus -- i.e. without having to take
+# mutation_lock and stall behind an in-flight multi-second display
+# dispatch. It can therefore be up to LED_I2C_RECHECK_INTERVAL stale,
+# exactly the staleness i2c_ok (and the onboard LED) has always tolerated
+# for the same reason. Code that needs a real-time count for correctness
+# (print_string()'s dispatch, call_claude()'s target length) still calls
+# get_module_addresses() live, under the lock.
 i2c_ok = False
 last_i2c_check = 0
 led_on = False
 last_led_toggle_ms = 0
+cached_module_count = 0
 
 # ----------------------------
 # Boot
@@ -879,6 +996,7 @@ else:
     print("I2C devices:", [hex(a) for a in s])
 i2c_ok = bool(s)
 last_i2c_check = time.time()
+cached_module_count = len(get_module_addresses())
 
 wlan, ip = connect_wifi()
 _synced = sync_time()
@@ -890,7 +1008,7 @@ char_per_row = load_char_per_row()
 current_layouts, active_layout_name = load_layouts()
 _rebuild_layout_cache()
 
-server = start_server()
+# server = start_server() removed -- asyncio.start_server() replaces this, called from main()
 
 # ----------------------------
 # Firmware update (zip upload)
@@ -1117,53 +1235,54 @@ def unpack_firmware_zip(zip_path):
 
     return extracted
 
-def handle_firmware_update(conn, header_bytes, body_prefix):
+async def handle_firmware_update(conn, header_bytes, body_prefix):
     content_length = parse_content_length(header_bytes)
 
     if content_length <= 0:
-        http_send_json(conn, {"ok": False, "error": "Missing Content-Length."}, code="400 Bad Request")
-        conn.close()
+        await async_http_send_json(conn, {"ok": False, "error": "Missing Content-Length."}, code="400 Bad Request")
+        await conn.close()
         return
     if content_length > FIRMWARE_UPDATE_MAX_BYTES:
-        http_send_json(conn, {"ok": False, "error": "Firmware package too large."}, code="400 Bad Request")
-        conn.close()
+        await async_http_send_json(conn, {"ok": False, "error": "Firmware package too large."}, code="400 Bad Request")
+        await conn.close()
         return
 
-    # Stream straight to flash -- never through read_http_request()'s UTF-8 decode.
-    written = len(body_prefix)
-    try:
-        with open(FIRMWARE_UPDATE_TMP, "wb") as f:
-            f.write(body_prefix)
-            conn.settimeout(10)
-            while written < content_length:
-                chunk = conn.recv(1024)
-                if not chunk:
-                    break
-                f.write(chunk)
-                written += len(chunk)
-    except OSError as e:
-        http_send_json(conn, {"ok": False, "error": "Upload failed: {}".format(e)}, code="500 Internal Server Error")
-        conn.close()
-        return
+    async with mutation_lock:
+        # Stream straight to flash -- never through read_http_request()'s UTF-8 decode.
+        written = len(body_prefix)
+        try:
+            with open(FIRMWARE_UPDATE_TMP, "wb") as f:
+                f.write(body_prefix)
+                conn.settimeout(10)
+                while written < content_length:
+                    chunk = await conn.recv(1024)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    written += len(chunk)
+        except OSError as e:
+            await async_http_send_json(conn, {"ok": False, "error": "Upload failed: {}".format(e)}, code="500 Internal Server Error")
+            await conn.close()
+            return
 
-    if written < content_length:
+        if written < content_length:
+            _remove_quietly(FIRMWARE_UPDATE_TMP)
+            await async_http_send_json(conn, {"ok": False, "error": "Upload incomplete."}, code="400 Bad Request")
+            await conn.close()
+            return
+
+        try:
+            extracted = unpack_firmware_zip(FIRMWARE_UPDATE_TMP)
+        except Exception as e:
+            _remove_quietly(FIRMWARE_UPDATE_TMP)
+            await async_http_send_json(conn, {"ok": False, "error": "Invalid firmware package: {}".format(e)}, code="400 Bad Request")
+            await conn.close()
+            return
+
         _remove_quietly(FIRMWARE_UPDATE_TMP)
-        http_send_json(conn, {"ok": False, "error": "Upload incomplete."}, code="400 Bad Request")
-        conn.close()
-        return
 
-    try:
-        extracted = unpack_firmware_zip(FIRMWARE_UPDATE_TMP)
-    except Exception as e:
-        _remove_quietly(FIRMWARE_UPDATE_TMP)
-        http_send_json(conn, {"ok": False, "error": "Invalid firmware package: {}".format(e)}, code="400 Bad Request")
-        conn.close()
-        return
-
-    _remove_quietly(FIRMWARE_UPDATE_TMP)
-
-    http_send_json(conn, {"ok": True, "files": extracted, "status": "Firmware updated, rebooting..."})
-    conn.close()
+    await async_http_send_json(conn, {"ok": True, "files": extracted, "status": "Firmware updated, rebooting..."})
+    await conn.close()
 
     import machine  # inline: only needed on this reboot path
     sleep(1)
@@ -1172,12 +1291,12 @@ def handle_firmware_update(conn, header_bytes, body_prefix):
 # ----------------------------
 # Request handler
 # ----------------------------
-def handle_request(conn):
+async def handle_request(conn):
     global mode, last_text, status_line, current_timezone, minutes, last_temp_update
     try:
-        header_bytes, body_prefix = read_http_headers(conn)
+        header_bytes, body_prefix = await async_read_http_headers(conn)
         if not header_bytes:
-            conn.close()
+            await conn.close()
             conn = None
             return
         line = header_bytes.split(b"\r\n", 1)[0].decode("utf-8", "ignore")
@@ -1188,15 +1307,23 @@ def handle_request(conn):
         route, _ = parse_query(path)
 
         if route == "/api/firmware/update" and method == "POST":
-            handle_firmware_update(conn, header_bytes, body_prefix)
+            await handle_firmware_update(conn, header_bytes, body_prefix)
             conn = None
             return
 
         content_length = parse_content_length(header_bytes)
         body_bytes = body_prefix
+        if len(body_bytes) < content_length:
+            # async_read_http_headers() left the socket at its 0.25s
+            # per-chunk timeout, tuned for waiting on header bytes -- too
+            # tight for a body that arrives in a separate read from the
+            # headers (routine on a real network), which silently produced
+            # a truncated body and a spurious "No <field> provided." 400.
+            # Match handle_firmware_update()'s own body-read timeout here.
+            conn.settimeout(10)
         while len(body_bytes) < content_length:
             try:
-                chunk = conn.recv(512)
+                chunk = await conn.recv(512)
                 if not chunk:
                     break
                 body_bytes += chunk
@@ -1205,11 +1332,14 @@ def handle_request(conn):
         req = (header_bytes + b"\r\n\r\n" + body_bytes).decode("utf-8", "ignore")
 
         if route == "/api/state":
-            http_send_json(conn, {
+            # Reads only in-memory state (module_count comes from the cache
+            # update_led() refreshes) -- deliberately takes no lock so a
+            # status poll never stalls behind an in-flight display update.
+            await async_http_send_json(conn, {
                 "mode": mode,
                 "text": last_text,
                 "status": status_line,
-                "module_count": len(get_module_addresses()),
+                "module_count": cached_module_count,
                 "char_per_row": char_per_row,
                 "active_layout": active_layout_name,
             })
@@ -1220,56 +1350,59 @@ def handle_request(conn):
             if t:
                 last_text = t
                 mode = MODE_TEXT
-                print_string(last_text)
+                async with mutation_lock:
+                    await print_string(last_text)
                 status_line = "Displayed: {}".format(last_text)
-                http_send_json(conn, {"ok": True, "status": status_line})
+                await async_http_send_json(conn, {"ok": True, "status": status_line})
             else:
-                http_send_json(conn, {"ok": False, "error": "No text provided."}, code="400 Bad Request")
+                await async_http_send_json(conn, {"ok": False, "error": "No text provided."}, code="400 Bad Request")
 
         elif route == "/api/mode" and method == "POST":
             data = parse_json_body(req)
             m = data.get("mode", "")
             if m == MODE_LAYOUT:
                 requested = data.get("layout")
-                if requested is not None and requested not in layout_tokens_cache:
-                    http_send_json(conn, {"ok": False, "error": "Unknown layout."}, code="400 Bad Request")
-                    return
                 if requested is not None:
-                    save_active_layout(requested)
+                    async with mutation_lock:
+                        if requested not in layout_tokens_cache:
+                            await async_http_send_json(conn, {"ok": False, "error": "Unknown layout."}, code="400 Bad Request")
+                            return
+                        save_active_layout(requested)
                 mode = MODE_LAYOUT
                 last_temp_update = 0
-                render_active_layout()
+                await render_active_layout()
                 status_line = "Switched to {}".format(active_layout_name)
-                http_send_json(conn, {"ok": True, "status": status_line})
+                await async_http_send_json(conn, {"ok": True, "status": status_line})
             else:
-                http_send_json(conn, {"ok": False, "error": "Unknown mode."}, code="400 Bad Request")
+                await async_http_send_json(conn, {"ok": False, "error": "Unknown mode."}, code="400 Bad Request")
 
         elif route == "/api/8ball" and method == "POST":
-            last_text = eightball_roll()
+            async with mutation_lock:
+                last_text = await eightball_roll()
             mode = MODE_TEXT
             status_line = "Shaking..."
-            http_send_json(conn, {"ok": True, "text": last_text, "status": status_line})
+            await async_http_send_json(conn, {"ok": True, "text": last_text, "status": status_line})
 
         elif route == "/api/home" and method == "POST":
-            home_all()
+            async with mutation_lock:
+                await home_all()
             status_line = "Homing..."
-            http_send_json(conn, {"ok": True, "status": status_line})
+            await async_http_send_json(conn, {"ok": True, "status": status_line})
 
         elif route == "/api/claude" and method == "POST":
             data = parse_json_body(req)
             prompt = data.get("prompt", "").strip()
             if prompt:
                 status_line = "Asking Claude..."
-                http_send_json(conn, {"ok": True, "status": status_line})
-                conn.close()
-                conn = None
-                result = call_claude(prompt)
+                result = await call_claude(prompt)
                 last_text = result
                 mode = MODE_TEXT
-                print_string(last_text)
+                async with mutation_lock:
+                    await print_string(last_text)
                 status_line = "Claude: {}".format(last_text)
+                await async_http_send_json(conn, {"ok": True, "status": status_line})
             else:
-                http_send_json(conn, {"ok": False, "error": "No prompt provided."}, code="400 Bad Request")
+                await async_http_send_json(conn, {"ok": False, "error": "No prompt provided."}, code="400 Bad Request")
 
         elif route == "/api/setup/wifi" and method == "POST":
             import machine  # inline: only needed on the reboot path, not at normal boot
@@ -1277,57 +1410,66 @@ def handle_request(conn):
             new_ssid = data.get("ssid", "").strip()
             new_password = data.get("password", "")
             if new_ssid:
-                save_wifi_config(new_ssid, new_password)
-                http_send_json(conn, {"ok": True})
-                conn.close()
+                async with mutation_lock:
+                    save_wifi_config(new_ssid, new_password)
+                await async_http_send_json(conn, {"ok": True})
+                await conn.close()
                 conn = None
                 sleep(1)
                 machine.reset()
             else:
-                http_send_json(conn, {"ok": False, "error": "SSID cannot be empty."}, code="400 Bad Request")
+                await async_http_send_json(conn, {"ok": False, "error": "SSID cannot be empty."}, code="400 Bad Request")
 
         elif route == "/api/setup/apikey" and method == "POST":
             data = parse_json_body(req)
             key = data.get("key", "").strip()
             if key:
-                save_api_key(key)
-                http_send_json(conn, {"ok": True})
+                async with mutation_lock:
+                    save_api_key(key)
+                await async_http_send_json(conn, {"ok": True})
             else:
-                http_send_json(conn, {"ok": False, "error": "API key cannot be empty."}, code="400 Bad Request")
+                await async_http_send_json(conn, {"ok": False, "error": "API key cannot be empty."}, code="400 Bad Request")
 
         elif route == "/api/setup/timezone" and method == "POST":
             data = parse_json_body(req)
             new_zone = data.get("zone", "")
             if not new_zone or new_zone not in tz.ZONES:
-                http_send_json(conn, {"ok": False, "error": "Unknown timezone"}, code="400 Bad Request")
+                await async_http_send_json(conn, {"ok": False, "error": "Unknown timezone"}, code="400 Bad Request")
             else:
-                save_timezone(new_zone)
-                http_send_json(conn, {"ok": True})
+                async with mutation_lock:
+                    save_timezone(new_zone)
+                await async_http_send_json(conn, {"ok": True})
 
         elif route == "/api/modules/identify" and method == "POST":
             data = parse_json_body(req)
             address = data.get("address")
             if address is None:
-                http_send_json(conn, {"ok": False, "error": "Missing address."}, code="400 Bad Request")
+                await async_http_send_json(conn, {"ok": False, "error": "Missing address."}, code="400 Bad Request")
             else:
                 try:
-                    i2c.writeto(int(address), bytes([ord('A'), 0x00]))
-                    http_send_json(conn, {"ok": True})
+                    async with mutation_lock:
+                        i2c.writeto(int(address), bytes([ord('A'), 0x00]))
+                    await async_http_send_json(conn, {"ok": True})
                 except Exception as e:
-                    http_send_json(conn, {"ok": False, "error": str(e)}, code="500 Internal Server Error")
+                    await async_http_send_json(conn, {"ok": False, "error": str(e)}, code="500 Internal Server Error")
 
         elif route == "/api/modules/power_down" and method == "POST":
             data = parse_json_body(req)
             address = data.get("address")
             if address is None:
-                http_send_json(conn, {"ok": False, "error": "Missing address."}, code="400 Bad Request")
+                await async_http_send_json(conn, {"ok": False, "error": "Missing address."}, code="400 Bad Request")
             else:
                 try:
-                    i2c.writeto(int(address), bytes([ord('P'), 0x00]))
-                    last_displayed_chars.pop(int(address), None)
-                    http_send_json(conn, {"ok": True})
+                    async with mutation_lock:
+                        i2c.writeto(int(address), bytes([ord('P'), 0x00]))
+                        # Evict inside the same lock as the write it tracks --
+                        # not one line after it, which would only be safe
+                        # because MicroPython's Lock.__aexit__ happens not to
+                        # yield to the scheduler.
+                        last_displayed_chars.pop(int(address), None)
+                    await async_http_send_json(conn, {"ok": True})
                 except Exception as e:
-                    http_send_json(conn, {"ok": False, "error": str(e)}, code="500 Internal Server Error")
+                    await async_http_send_json(conn, {"ok": False, "error": str(e)}, code="500 Internal Server Error")
 
         elif route == "/api/modules" and method == "POST":
             data = parse_json_body(req)
@@ -1336,46 +1478,50 @@ def handle_request(conn):
             speed = data.get("speed")
             offset = data.get("offset")
             if address is None or speed is None or offset is None or new_address is None:
-                http_send_json(conn, {"ok": False, "error": "Missing fields."}, code="400 Bad Request")
+                await async_http_send_json(conn, {"ok": False, "error": "Missing fields."}, code="400 Bad Request")
             else:
                 try:
-                    ok = update_module_params(int(address), int(speed), int(offset), int(new_address))
+                    async with mutation_lock:
+                        ok = update_module_params(int(address), int(speed), int(offset), int(new_address))
                 except (ValueError, TypeError):
-                    http_send_json(conn, {"ok": False, "error": "Invalid field values."}, code="400 Bad Request")
+                    await async_http_send_json(conn, {"ok": False, "error": "Invalid field values."}, code="400 Bad Request")
                     ok = None
                 if ok is True:
-                    http_send_json(conn, {"ok": True})
+                    await async_http_send_json(conn, {"ok": True})
                 elif ok is False:
-                    http_send_json(conn, {"ok": False, "error": "I2C write failed."}, code="500 Internal Server Error")
+                    await async_http_send_json(conn, {"ok": False, "error": "I2C write failed."}, code="500 Internal Server Error")
 
         elif route == "/api/modules" and method == "GET":
-            addresses = sorted(i2c.scan())
-            modules = [read_module_params(a) for a in addresses]
-            http_send_json(conn, modules)
+            async with mutation_lock:
+                addresses = sorted(i2c.scan())
+                modules = [read_module_params(a) for a in addresses]
+            await async_http_send_json(conn, modules)
 
         elif route == "/api/timezone" and method == "GET":
             zones = tz.zone_list()
-            http_send_json(conn, {"zones": zones, "current": current_timezone})
+            await async_http_send_json(conn, {"zones": zones, "current": current_timezone})
 
-        elif route == "/api/energy" and method == "GET":
-            http_send_json(conn, {"max_concurrent": max_concurrent_modules})
+        elif route == "/api/max_concurrent_modules" and method == "GET":
+            await async_http_send_json(conn, {"max_concurrent": max_concurrent_modules})
 
-        elif route == "/api/setup/energy" and method == "POST":
+        elif route == "/api/setup/max_concurrent_modules" and method == "POST":
             data = parse_json_body(req)
             try:
                 value = int(data.get("max_concurrent"))
                 if value < 1:
                     raise ValueError()
             except (TypeError, ValueError):
-                http_send_json(conn, {"ok": False, "error": "max_concurrent must be a positive integer."}, code="400 Bad Request")
+                await async_http_send_json(conn, {"ok": False, "error": "max_concurrent must be a positive integer."}, code="400 Bad Request")
             else:
-                save_max_concurrent(value)
-                http_send_json(conn, {"ok": True})
+                async with mutation_lock:
+                    save_max_concurrent(value)
+                await async_http_send_json(conn, {"ok": True})
 
         elif route == "/api/layout" and method == "GET":
-            http_send_json(conn, {
+            # In-memory only, no lock -- see the /api/state branch above.
+            await async_http_send_json(conn, {
                 "char_per_row": char_per_row,
-                "module_count": len(get_module_addresses()),
+                "module_count": cached_module_count,
             })
 
         elif route == "/api/setup/layout" and method == "POST":
@@ -1385,13 +1531,14 @@ def handle_request(conn):
                 if value != -1 and value < 1:
                     raise ValueError()
             except (TypeError, ValueError):
-                http_send_json(conn, {"ok": False, "error": "char_per_row must be -1 or a positive integer."}, code="400 Bad Request")
+                await async_http_send_json(conn, {"ok": False, "error": "char_per_row must be -1 or a positive integer."}, code="400 Bad Request")
             else:
-                save_char_per_row(value)
-                http_send_json(conn, {"ok": True})
+                async with mutation_lock:
+                    save_char_per_row(value)
+                await async_http_send_json(conn, {"ok": True})
 
         elif route == "/api/layouts" and method == "GET":
-            http_send_json(conn, {
+            await async_http_send_json(conn, {
                 "layouts": [
                     {
                         "name": entry["name"],
@@ -1409,7 +1556,7 @@ def handle_request(conn):
             new_active = data.get("active_layout")
 
             if not isinstance(new_layouts, list) or len(new_layouts) == 0:
-                http_send_json(conn, {"ok": False, "error": "layouts must be a non-empty list."}, code="400 Bad Request")
+                await async_http_send_json(conn, {"ok": False, "error": "layouts must be a non-empty list."}, code="400 Bad Request")
                 return
 
             names = []
@@ -1421,21 +1568,21 @@ def handle_request(conn):
                 if not isinstance(template, str):
                     template = ""
                 if not name:
-                    http_send_json(conn, {"ok": False, "error": "Layout name cannot be empty."}, code="400 Bad Request")
+                    await async_http_send_json(conn, {"ok": False, "error": "Layout name cannot be empty."}, code="400 Bad Request")
                     return
                 if name in names:
-                    http_send_json(conn, {"ok": False, "error": "Duplicate layout name: {}".format(name)}, code="400 Bad Request")
+                    await async_http_send_json(conn, {"ok": False, "error": "Duplicate layout name: {}".format(name)}, code="400 Bad Request")
                     return
                 try:
                     layout.parse_template(template)
                 except ValueError as e:
-                    http_send_json(conn, {"ok": False, "error": "Layout '{}': {}".format(name, e)}, code="400 Bad Request")
+                    await async_http_send_json(conn, {"ok": False, "error": "Layout '{}': {}".format(name, e)}, code="400 Bad Request")
                     return
                 names.append(name)
                 clean_layouts.append({"name": name, "template": template})
 
             if new_active is not None and new_active not in names:
-                http_send_json(conn, {"ok": False, "error": "active_layout must name one of the posted layouts."}, code="400 Bad Request")
+                await async_http_send_json(conn, {"ok": False, "error": "active_layout must name one of the posted layouts."}, code="400 Bad Request")
                 return
 
             if new_active is not None:
@@ -1445,51 +1592,58 @@ def handle_request(conn):
             else:
                 active = names[0]
 
-            save_layouts(clean_layouts, active)
+            async with mutation_lock:
+                save_layouts(clean_layouts, active)
             if mode == MODE_LAYOUT:
-                render_active_layout()
+                await render_active_layout()
 
-            http_send_json(conn, {"ok": True})
+            await async_http_send_json(conn, {"ok": True})
 
         elif route.startswith("/assets/"):
             filename = route.lstrip("/")
-            http_send_file(conn, filename)
+            await async_http_send_file(conn, filename)
 
         elif route == "/" or route == "/index.html":
-            http_send_file(conn, "index.html")
+            await async_http_send_file(conn, "index.html")
 
         else:
-            http_send_file(conn, "index.html")
+            await async_http_send_file(conn, "index.html")
 
     except Exception as e:
         print(f"Unable to process request:")
         sys.print_exception(e)
         if conn:
             try:
-                http_send(conn, "Error: {}".format(e), code="500 Internal Server Error", content_type="text/plain")
+                await async_http_send(conn, "Error: {}".format(e), code="500 Internal Server Error", content_type="text/plain")
             except:
                 pass
     finally:
         if conn:
-            conn.close()
+            await conn.close()
 
 
 # ----------------------------
 # Background tasks
 # ----------------------------
-def update_led():
+async def update_led():
     """Drive the onboard LED to reflect WiFi/I2C status:
        - solid on:   WiFi connected AND at least one I2C module present
        - slow blink: WiFi connected, no I2C modules
        - fast blink: I2C modules present, WiFi not connected
        - off:        neither
     """
-    global i2c_ok, last_i2c_check, led_on, last_led_toggle_ms
+    global i2c_ok, last_i2c_check, led_on, last_led_toggle_ms, cached_module_count
 
     now = time.time()
     if now - last_i2c_check >= LED_I2C_RECHECK_INTERVAL:
         last_i2c_check = now
-        i2c_ok = bool(i2c.scan())
+        async with mutation_lock:
+            # i2c_ok is deliberately the raw "is anything on the bus" check,
+            # which is NOT the same as get_module_addresses()'s "contiguous
+            # from BASE_ADDR" count: a module parked in pairing mode at 0x10
+            # keeps the LED solid but must not count toward module_count.
+            i2c_ok = bool(i2c.scan())
+            cached_module_count = len(get_module_addresses())
 
     wifi_ok = bool(wlan and wlan.isconnected())
 
@@ -1508,7 +1662,7 @@ def update_led():
         led.value(led_on)
 
 
-def tick():
+async def tick():
     global next_ntp_sync
     now = time.time()
 
@@ -1520,7 +1674,7 @@ def tick():
         if layout.uses_temperature(tokens) and now - last_temp_update >= TEMP_UPDATE_INTERVAL:
             needs_render = True
         if needs_render:
-            render_active_layout()
+            await render_active_layout()
 
     # Periodic NTP re-sync
     if now >= next_ntp_sync:
@@ -1531,18 +1685,30 @@ def tick():
 # ----------------------------
 # Main loop
 # ----------------------------
-while True:
-    try:
-        conn = None
+async def tick_loop():
+    while True:
         try:
-            conn, _ = server.accept()
-        except OSError:
-            conn = None
-        if conn:
-            handle_request(conn)
-        tick()
-        update_led()
-    except Exception as e:
-        print("Loop error:", e)
+            await tick()
+            await update_led()
+        except Exception as e:
+            print("Tick error:", e)
+        await asyncio.sleep_ms(50)
 
-    sleep(0.05)
+
+async def handle_client(reader, writer):
+    conn = AsyncConn(reader, writer)
+    try:
+        await handle_request(conn)
+    except Exception as e:
+        print("handle_client error:", e)
+
+
+async def main():
+    asyncio.create_task(tick_loop())
+    server = await asyncio.start_server(handle_client, "0.0.0.0", 80, backlog=4)
+    print("HTTP server listening on :80")
+    while True:
+        await asyncio.sleep(3600)
+
+
+asyncio.run(main())

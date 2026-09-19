@@ -1,0 +1,16 @@
+[Unit]
+Description=OpenFlaps MCP display server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=openflap
+WorkingDirectory=/opt/openflaps/mcp-server
+EnvironmentFile=/opt/openflaps/mcp-server/.env
+ExecStart=/opt/openflaps/mcp-server/.venv/bin/python -m mcp_server
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

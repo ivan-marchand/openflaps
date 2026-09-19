@@ -10,7 +10,7 @@ __pycache__/
 firmware/pico/wifi_config.json
 firmware/pico/api_config.json
 firmware/pico/timezone_config.json
-firmware/pico/energy_config.json
+firmware/pico/max_concurrent_modules_config.json
 firmware/pico/layout_config.json
 
 # MicroPython runtime files for POST /api/firmware/update
@@ -25,3 +25,9 @@ firmware/attiny84/test-host/.pio/
 
 # emscripten simulator build output
 firmware/attiny84/sim/web/sim.wasm.js
+
+# MCP server secrets/state
+mcp-server/.env
+mcp-server/data/
+mcp-server/.venv/
+*.egg-info/
