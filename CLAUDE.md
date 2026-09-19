@@ -78,7 +78,7 @@ Or just run `./firmware/pico/deploy.sh` which builds, copies, and uploads everyt
 ## Key Files
 
 - `firmware/pico/main.py` — Main Pico controller (HTTP server, I2C master, display logic)
-- `firmware/pico/layout.py` — Layout template engine: field registry, `parse_template()`, `render()`, `required_width()`, `uses_temperature()` (see Display Modes below)
+- `firmware/pico/layout.py` — Layout template engine: field registry, `parse_template()`, `render()`, `required_width()`, `uses_weather()` (see Display Modes below)
 - `firmware/pico/tz.py` — Timezone table with DST rules (~35 zones), `get_offset()`, `zone_list()`
 - `firmware/pico/deploy.sh` — Deploys all firmware files to Pico via `mpremote` (USB) or `POST /api/firmware/update` (`--ota [host]`)
 - `firmware/pico/index.html` — Built Preact SPA (served to browser)
@@ -133,7 +133,7 @@ Any new route or background task must preserve these invariants:
   `get_module_addresses()` itself, since `print_string()` calls it from within
   its own locked section. Lock the external call sites instead.
 - **Never hold it across a slow or unbounded wait**, especially a network call
-  (`call_claude()`, `get_outdoor_temp()`). Acquire it around the actual
+  (`call_claude()`, `get_weather()`). Acquire it around the actual
   I2C/config-write critical section only, as late and as briefly as possible.
   The one intentional exception is `POST /api/firmware/update`, which holds
   it across the whole upload — acceptable because the device reboots
@@ -151,7 +151,7 @@ Full rationale: `docs/superpowers/specs/2026-09-17-pico-async-concurrency-design
 
 | Mode constant | Value | Behaviour |
 |---|---|---|
-| `MODE_LAYOUT` | `"layout"` | Renders the active named layout's template, auto-updating (time/date fields every minute, temperature on `TEMP_UPDATE_INTERVAL`) |
+| `MODE_LAYOUT` | `"layout"` | Renders the active named layout's template, auto-updating (time/date fields every minute, weather on `WEATHER_UPDATE_INTERVAL`) |
 | `MODE_TEXT` | `"text"` | Shows user text or Claude response, static |
 
 `MODE_LAYOUT` replaced the old fixed `MODE_TIME`/`MODE_TEMP` modes with a
@@ -160,9 +160,9 @@ pair (SetupPage's "Layouts" card manages the catalog; ControlPage's
 dropdown picks which one is live — see `layout_config.json` above).
 `main.py`'s `render_active_layout()` computes the current
 timezone-adjusted `time.localtime()` tuple and the last-known outdoor
-temperature, then calls `layout.render()` to produce the display string
+weather dict (`get_weather()`, one open-meteo `current=` request), then calls `layout.render()` to produce the display string
 and per-character energize mask; `tick()` calls it whenever the minute
-changes or (for a template using a temperature field) the refresh
+changes or (for a template using a weather field) the refresh
 interval elapses.
 
 **Template syntax** (`firmware/pico/layout.py`): a template mixes literal
@@ -188,6 +188,19 @@ than the natural value; text fields keep the leftmost characters.
 | `weekday` | `MON`..`SUN` (no zero-pad) | 3 | 3 |
 | `temperature_f` | outdoor °F | 2 | 3 |
 | `temperature_c` | outdoor °C | 2 | 3 |
+| `humidity` | outdoor relative humidity, 0-100 | 2 | 3 |
+| `wind_mph` | wind speed, mph | 2 | 3 |
+| `wind_kmh` | wind speed, km/h | 2 | 3 |
+| `wind_deg` | wind direction in degrees, 0-359 | 2 | 3 |
+| `wind_dir` | 16-point compass (`N`, `NNE`, .. `NNW`; no zero-pad) | 2 | 3 |
+| `condition` | WMO weather code as text: `CLR`, `PCLD`, `CLD`, `FOG`, `DRZL`, `ICE`, `RAIN`, `SNOW`, `SHWR`, `TSTM` (no zero-pad) | 3 | 4 |
+
+The weather fields (`temperature_*` through `condition`) all come from the
+same `get_weather()` fetch, which returns a dict of raw readings
+(`temp_c`, `humidity`, `code`, `wind_kmh`, `wind_deg`); each field derives
+its value from that dict. open-meteo only refreshes its `current` block
+every 15 minutes, so `WEATHER_UPDATE_INTERVAL` (60 s) polls more often than
+the data changes.
 
 A width below a field's minimum, a zero-pad flag on `ampm`/`weekday`, or
 a `year` width other than 2/4 are all rejected at save time (`POST
@@ -199,11 +212,13 @@ omitted); `GET /api/layouts` returns it per layout, and ControlPage's
 dropdown hides any layout whose `required_width` exceeds the detected
 `module_count` — display-only filtering, not enforced at save time.
 
-If the outdoor temperature has never been successfully fetched, a
-temperature field renders as dashes filling its width (or `"---"` if no
+If the outdoor weather has never been successfully fetched, every
+weather field renders as dashes filling its width (or `"---"` if no
 width given) instead of blocking the rest of the template; once a
 reading succeeds, a later failed refetch just keeps showing the last
-known value rather than reverting to dashes.
+known values rather than reverting to dashes. A single reading the API
+omits, or a weather code with no text mapping, renders as dashes the same
+way.
 
 Display width is auto-detected: `get_module_addresses()` walks `i2c.scan()` results from `BASE_ADDR` upward to find the contiguous module count (also returned as `module_count` by `GET /api/state` / `GET /api/layout`, and used to size the frontend's text input and Claude's target length — nothing is hardcoded to 4 characters anymore). `print_string(s)` left-aligns/hard-wraps `s` to that count, then reverses each row before assigning to addresses in increasing order, since modules are wired right-to-left within a row (`BASE_ADDR` is the rightmost character of the first row). Modules are dispatched leftmost (highest address) first, like natural left-to-right writing.
 
@@ -215,7 +230,7 @@ Display width is auto-detected: `get_module_addresses()` walks `i2c.scan()` resu
 
 - By default, each ATtiny84 de-energizes its stepper coils (`PowerManagedStepper.deactivate()`) as soon as it reaches its target position or finishes homing, so idle modules draw no holding current. Because the 28BYJ-48 has no absolute position sensor, de-energized coils mean the rotor can drift under load — so the next `D` (display character) command re-homes first if the coils are off, before moving to the new target.
 - The `D` command takes an optional `keep_energized` byte (see protocol table below) so a field that updates frequently (a template's `minutes` field — every 60s) can leave coils powered between updates and skip the re-home each time, since re-homing every minute would be slower, noisier, and wear the limit switch. `layout.render()` leaves it off (default) for every field except `minutes`, and for static text (`MODE_TEXT`, Claude responses) — anything that can sit idle for a long time (or between infrequent changes) benefits most from de-energizing.
-- Holding two coils continuously energized indefinitely is real, sustained heating — a 28BYJ-48 driven full-step (see `STEPPERH_SEQ` in `split_flap_controller.h`) always has two windings on at full current with no PWM current-limiting, so a clock-like layout can't just hold every digit energized forever. `print_string()`'s `keep_energized` parameter accepts a list/tuple (one bool per character, in `s`'s natural order) as well as a plain bool. `layout.render()` only holds the **last rendered character of a `minutes` field** — the one digit that changes on every single update, always the ones digit regardless of the field's width/padding style — and even that gets a rest once every 10 minutes, right when it reaches `'9'` rather than `'0'`. Every other field/character (hours, date fields, temperature, etc.) is left at `False` and just de-energizes/re-homes normally like any other infrequent update. A template that omits `minutes` entirely gets no special-cased hold at all.
+- Holding two coils continuously energized indefinitely is real, sustained heating — a 28BYJ-48 driven full-step (see `STEPPERH_SEQ` in `split_flap_controller.h`) always has two windings on at full current with no PWM current-limiting, so a clock-like layout can't just hold every digit energized forever. `print_string()`'s `keep_energized` parameter accepts a list/tuple (one bool per character, in `s`'s natural order) as well as a plain bool. `layout.render()` only holds the **last rendered character of a `minutes` field** — the one digit that changes on every single update, always the ones digit regardless of the field's width/padding style — and even that gets a rest once every 10 minutes, right when it reaches `'9'` rather than `'0'`. Every other field/character (hours, date fields, weather, etc.) is left at `False` and just de-energizes/re-homes normally like any other infrequent update. A template that omits `minutes` entirely gets no special-cased hold at all.
 - The rest lands on `'9'`, not `'0'`, because of where the home/limit-switch reference sits relative to `char_set`'s digit order: resting at `'9'` means the next forced re-home (`'9'`→`'0'`) retraces the same ~36-step sweep a direct move would take anyway (9 steps back to the switch + 27 more to `'0'`), so it costs nothing extra. Resting at `'0'` instead would mean the *following* update (`'0'`→`'1'`, normally a single step) pays for a 46-step round trip instead (18 back to the switch, 28 forward to `'1'`) — a wasted detour purely from choosing the wrong digit to rest on.
 - A `P` command explicitly de-energizes a module's coils on demand (no-op while it's busy); reachable from the Pico/UI via `POST /api/modules/power_down`.
 - Each module's live `energized` state is included in `GET /api/modules`, so the number of currently-energized modules can be used as a rough live estimate of holding-current draw. The ModulesPage shows it per module with a "PWR OFF" button.
