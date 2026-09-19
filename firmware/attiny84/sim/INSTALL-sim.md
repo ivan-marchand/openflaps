@@ -20,7 +20,8 @@ visual, interactive front end for the same code.
   keep_energized byte, the 5-byte status response (`speed, offset, avg_missed,
   busy, energized`), coil energize/de-energize (idle modules de-energize;
   `keep_energized` and the button-hold both stay powered until the next
-  command or, for a button hold, a timeout), short-press = next char,
+  command or, for a button hold, a timeout), no homing at boot (the first `D`
+  homes), short-press = next char (or `?` on an unpaired module),
   long-press (>= 3 s) = pairing (address -> 0x10), EEPROM persistence of the
   assigned address (via `localStorage`).
 - **Does not:** USI / `Wire` byte-level I2C timing (the page calls
@@ -119,14 +120,16 @@ change `build.sh`'s modularize flags.
 
     node test_smoke.mjs               # -> "sim smoke test: OK"
 
-Exercises the C ABI directly: homing completes and resets position to 0, `D`
+Exercises the C ABI directly: a fresh module is idle and de-energized (no boot
+homing) and its first `D` homes it, homing completes and resets position to 0, `D`
 moves the rotor to a character **and settles there** (`'A'` -> step 75, `'Z'`
 -> step 1971, with `module_is_moving` back to 0 and `position == target`), a
 de-energized module re-homes before the next `D` instead of trusting a stale
 position, `keep_energized` (the D command's 3rd byte) skips that re-home on
 the following command, `module_power_down` de-energizes an idle module but is
 a no-op while busy, a write to the wrong address is not ACKed, and a 3500 ms
-press enters pairing (address -> 0x10).
+press enters pairing (address -> 0x10). A short press steps a paired module one
+character and shows `?` on an unpaired one.
 
 ## Files
 

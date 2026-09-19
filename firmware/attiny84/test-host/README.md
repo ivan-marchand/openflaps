@@ -10,7 +10,7 @@ and asserts their current behaviour.
     cd firmware/attiny84/test-host
     python3 -m platformio test -e native
 
-26 characterization tests plus 1 toolchain-harness check (`test_smoke`, which
+40 characterization tests plus 1 toolchain-harness check (`test_smoke`, which
 only proves ArduinoFake + Unity are wired up).
 
 ## C++11 check

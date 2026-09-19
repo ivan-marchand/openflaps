@@ -182,6 +182,35 @@ void test_display_char_rehomes_when_deenergized(void) {
     TEST_ASSERT_EQUAL_UINT32(151, c.position());  // 'B' index 2: (int)(2*3413/45)=151
 }
 
+// Boot sequence used by the .ino (setup() then power_down(), no initialize()):
+// the module comes up idle and de-energized, doing no homing of its own, so a
+// row of modules powering on together doesn't all home at once. The Pico's
+// first D command then homes it before moving.
+void test_boot_without_homing_then_first_char_homes(void) {
+    SplitFlapController c = make_controller();
+    c.setup(50, 0);
+    c.power_down();
+
+    TEST_ASSERT_FALSE(c.is_homing());
+    TEST_ASSERT_FALSE(c.is_busy());
+    TEST_ASSERT_FALSE(c.is_energized());
+
+    sim_limit_state = LOW;
+    c.display_char('A');   // first command: coils are off -> home first
+    TEST_ASSERT_TRUE(c.is_homing());
+
+    home_steps(c, 5);
+    sim_limit_state = HIGH;
+    home_steps(c, 60);
+    sim_limit_state = LOW;
+    home_steps(c, 3);
+    TEST_ASSERT_FALSE(c.is_homing());
+
+    run_until_idle(c);
+    TEST_ASSERT_EQUAL_CHAR('A', c.current_char());
+    TEST_ASSERT_EQUAL_UINT32(75, c.position());  // 'A' index 1: (int)(1*3413/45)=75
+}
+
 // power_down() de-energizes an idle module immediately.
 void test_power_down_deenergizes_when_idle(void) {
     SplitFlapController c = make_controller();
@@ -247,6 +276,7 @@ int main(int, char **) {
     RUN_TEST(test_display_char_default_deenergizes_after_settling);
     RUN_TEST(test_display_char_keep_energized_stays_active);
     RUN_TEST(test_display_char_rehomes_when_deenergized);
+    RUN_TEST(test_boot_without_homing_then_first_char_homes);
     RUN_TEST(test_power_down_deenergizes_when_idle);
     RUN_TEST(test_power_down_is_noop_while_busy);
     RUN_TEST(test_next_char_keeps_energized_after_settling);
