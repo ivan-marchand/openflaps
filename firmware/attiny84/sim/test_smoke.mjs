@@ -23,14 +23,14 @@ const get_addr         = c('module_get_address', 'number', ['number']);
 
 const h = module_new(0x11, 20, 0);
 
-// Homing should complete within a bounded number of ticks.
-for (let i = 0; i < 4000 && is_homing(h); i++) module_tick(h, 20000);
-assert.strictEqual(is_homing(h), 0, 'module finished homing');
-assert.strictEqual(get_pos(h), 0, 'position reset to 0 after homing');
-
-// setup()'s initialize() call homes directly (not via a pending move), so it
-// de-energizes once idle, same as the real firmware's power-saving default.
-assert.strictEqual(is_energized(h), 0, 'homed-but-idle module is de-energized');
+// A paired module does NOT home at boot: every module on the bus doing so at
+// once would bypass the Pico's max_concurrent_modules limit. It comes up idle
+// and de-energized, and its first D command homes it (see display() below).
+assert.strictEqual(is_homing(h), 0, 'no homing at boot');
+assert.strictEqual(is_busy(h), 0, 'idle at boot');
+assert.strictEqual(is_energized(h), 0, 'de-energized at boot');
+for (let i = 0; i < 50; i++) module_tick(h, 20000);
+assert.strictEqual(is_homing(h), 0, 'still not homing after time passes');
 
 // Display a character and let the move actually SETTLE. `moving` going back to
 // 0 with position == target is what proves the rotor reached the flap; a stuck
@@ -49,8 +49,11 @@ function display(ch, keepEnergized = false) {
   assert.strictEqual(String.fromCharCode(get_vis_char(h)), ch, `visible glyph is '${ch}'`);
 }
 
-// After homing, position 0 -> the visible glyph is the space at char_set[0].
-assert.strictEqual(String.fromCharCode(get_vis_char(h)), ' ', 'homed rotor shows space');
+// The first D after boot homes first (coils are off), then moves.
+assert.strictEqual(module_i2c_write(h, 0x11, 'D'.charCodeAt(0), 'A'.charCodeAt(0), 0), 1);
+assert.strictEqual(is_homing(h), 1, 'first D after boot homes before moving');
+for (let i = 0; i < 20000 && is_busy(h); i++) module_tick(h, 20000);
+assert.strictEqual(is_homing(h), 0, 'module finished homing');
 
 // 'A' is index 1 of the 45-char set -> target step 75. Default keep_energized
 // (0) de-energizes once the move settles.
@@ -85,16 +88,39 @@ assert.strictEqual(is_energized(h), 1);
 power_down(h);
 assert.strictEqual(is_energized(h), 0, 'power_down de-energizes an idle module');
 
-// ...but is a no-op while a move is still in progress. A freshly constructed
-// module is busy homing immediately (setup() arms it) while still energized
-// from begin() (energization only lazily turns off once idle), so it's busy
-// AND energized before any tick — exactly the case power_down() must not touch.
+// ...but is a no-op while a move is still in progress. Coils are off after
+// boot, so the first D starts homing; one tick energizes the stepper, leaving
+// the module busy AND energized -- exactly the case power_down() must not touch.
 const h2 = module_new(0x11, 20, 0);
-assert.strictEqual(is_busy(h2), 1, 'fresh module is homing immediately after construction');
+assert.strictEqual(module_i2c_write(h2, 0x11, 'D'.charCodeAt(0), 'A'.charCodeAt(0), 0), 1);
+module_tick(h2, 20000);
+assert.strictEqual(is_busy(h2), 1, 'module is homing');
 assert.strictEqual(is_energized(h2), 1);
 power_down(h2);
 assert.strictEqual(is_energized(h2), 1, 'power_down is a no-op while busy');
-for (let i = 0; i < 4000 && is_busy(h2); i++) module_tick(h2, 20000);   // let homing settle
+for (let i = 0; i < 20000 && is_busy(h2); i++) module_tick(h2, 20000);   // let it settle
+
+// Short press: a paired module steps one character forward; an unpaired one
+// (EEPROM address 0xFF) shows '?' instead. Neither does anything until pressed.
+const hp = module_new(0x11, 20, 0);
+press(hp, 100);
+for (let i = 0; i < 20000 && is_busy(hp); i++) module_tick(hp, 20000);
+assert.strictEqual(String.fromCharCode(get_char(hp)), 'A', 'paired short press steps one char');
+
+const hu = module_new(0xFF, 20, 0);
+assert.strictEqual(is_busy(hu), 0, 'unpaired module idle at boot (no homing, no ?)');
+assert.strictEqual(is_energized(hu), 0, 'unpaired module de-energized at boot');
+press(hu, 100);
+for (let i = 0; i < 20000 && is_busy(hu); i++) module_tick(hu, 20000);
+assert.strictEqual(String.fromCharCode(get_char(hu)), '?', 'unpaired short press shows ?');
+
+// After a long press it counts as paired again: short presses step.
+press(hu, 3500);
+for (let i = 0; i < 20000 && is_busy(hu); i++) module_tick(hu, 20000);
+assert.strictEqual(String.fromCharCode(get_char(hu)), 'P', 'long press shows P');
+press(hu, 100);
+for (let i = 0; i < 20000 && is_busy(hu); i++) module_tick(hu, 20000);
+assert.strictEqual(String.fromCharCode(get_char(hu)), 'Q', 'after pairing, short press steps (P -> Q)');
 
 // A wrong address is not ACKed.
 assert.strictEqual(module_i2c_write(h, 0x12, 'D'.charCodeAt(0), 'B'.charCodeAt(0), 0), 0);

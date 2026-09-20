@@ -26,6 +26,7 @@ static const float     GEAR_RATIO   = 50.0f / 30.0f;
 struct Module {
     SplitFlapController controller;
     ModuleConfig        cfg;
+    bool                is_paired = true;   // false = EEPROM address unset (0xFF)
     Module()
         : controller(STEPS_PER_REV, GEAR_RATIO, PIN_M1, PIN_M2, PIN_M3, PIN_M4, PIN_LIMIT),
           cfg{0x10, 10, 0} {}
@@ -56,13 +57,13 @@ Module* module_new(uint8_t eeprom_addr, uint8_t speed, int8_t offset) {
 
     bool is_paired = (eeprom_addr != 0xFF);
     Module* m = new Module();
+    m->is_paired = is_paired;
     uint8_t a = is_paired ? eeprom_addr : 0x10;
     m->cfg = ModuleConfig{ a, speed, offset };
     m->controller.setup(speed, offset);
-    m->controller.initialize();          // matches the .ino setup(): home either way
-    if (!is_paired) {
-        m->controller.display_char('?'); // matches the .ino: not paired yet
-    }
+    // Matches the .ino setup(): no homing at boot (the Pico's first D homes it,
+    // throttled; an unpaired module homes on a button press). Just de-energize.
+    m->controller.power_down();
     return m;
 }
 
@@ -109,10 +110,11 @@ EMSCRIPTEN_KEEPALIVE
 void module_press_button(Module* m, uint32_t duration_ms) {
     switch (classify_button_press(duration_ms)) {
         case ButtonAction::NEXT_CHAR:
-            m->controller.next_char();
+            apply_short_press(m->controller, m->is_paired);
             break;
         case ButtonAction::PAIRING:
             m->cfg.i2c_address = 0x10;
+            m->is_paired = true;              // the .ino writes 0x10 to EEPROM
             m->controller.initialize();
             m->controller.display_char('P');  // matches the .ino: ready to be paired
             break;

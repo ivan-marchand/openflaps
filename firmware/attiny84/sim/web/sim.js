@@ -72,7 +72,7 @@ function createModule() {
   lastAddr = api.addr(handle);
   syncTargetAddr(lastAddr);
   log(startedUnpaired
-    ? `module created unpaired — homed, showing '?'`
+    ? `module created unpaired — idle; short press shows '?', long press pairs`
     : `module created @ 0x${lastAddr.toString(16)}`);
 }
 createModule();
