@@ -248,6 +248,8 @@ Display width is auto-detected: `get_module_addresses()` walks `i2c.scan()` resu
 
 `print_string()` also skips re-sending a `D` command to any module whose target `(char, keep_energized)` hasn't changed since the last dispatch (tracked in the module-level `last_displayed_chars` cache). This matters because `request_char_index()` on the ATtiny always re-homes when coils are off, even if the target position equals the current one — so blindly resending an unchanged character to a de-energized module used to force a pointless re-home every time. `home_all()` clears the cache (homing invalidates any assumption about physical position), and `POST /api/modules/power_down` evicts just that module's entry (so a manually powered-down module isn't skipped next time even if its target char is unchanged).
 
+A module that shows up after the Pico has already rendered (powered on later, or plugged in) is picked up by `update_led()`'s periodic bus recheck: it evicts the new address from `last_displayed_chars` and sets `redisplay_pending`, and the next `tick()` re-dispatches the current display (`render_active_layout()` in layout mode, `print_string(last_text)` in text mode). The cache makes that cheap — only the new modules get a `D`. Without it, a module that no longer homes itself at boot would sit unhomed and blank until the next render (up to a minute in layout mode, indefinitely in text mode).
+
 ## Energy Saving
 
 - By default, each ATtiny84 de-energizes its stepper coils (`PowerManagedStepper.deactivate()`) as soon as it reaches its target position or finishes homing, so idle modules draw no holding current. Because the 28BYJ-48 has no absolute position sensor, de-energized coils mean the rotor can drift under load — so the next `D` (display character) command re-homes first if the coils are off, before moving to the new target.
@@ -256,7 +258,8 @@ Display width is auto-detected: `get_module_addresses()` walks `i2c.scan()` resu
 - The rest lands on `'9'`, not `'0'`, because of where the home/limit-switch reference sits relative to `char_set`'s digit order: resting at `'9'` means the next forced re-home (`'9'`→`'0'`) retraces the same ~36-step sweep a direct move would take anyway (9 steps back to the switch + 27 more to `'0'`), so it costs nothing extra. Resting at `'0'` instead would mean the *following* update (`'0'`→`'1'`, normally a single step) pays for a 46-step round trip instead (18 back to the switch, 28 forward to `'1'`) — a wasted detour purely from choosing the wrong digit to rest on.
 - A `P` command explicitly de-energizes a module's coils on demand (no-op while it's busy); reachable from the Pico/UI via `POST /api/modules/power_down`.
 - Each module's live `energized` state is included in `GET /api/modules`, so the number of currently-energized modules can be used as a rough live estimate of holding-current draw. The ModulesPage shows it per module with a "PWR OFF" button.
-- `print_string(s)` on the Pico limits how many modules are allowed to move at the same time, capping peak current draw across the bus. It dispatches `D` commands up to `max_concurrent_modules` at a time, then polls each module's `busy` status byte and starts the next queued character as slots free up.
+- The Pico limits how many modules are allowed to move at the same time, capping peak current draw across the bus. `dispatch_throttled()` sends up to `max_concurrent_modules` commands at a time, then polls each module's `busy` status byte and starts the next queued one as slots free up. Both `print_string()` (`D`) and `home_all()` (`I`) go through it — **any new command that starts a move or a homing run must too.**
+- **The ATtiny never homes on its own at boot.** Every module powering on together would otherwise home at the same time, bypassing that limit before the Pico is even up. A booted module sits de-energized and unhomed (`setup()` ends with `controller.power_down()`, not `initialize()`), and its first `D` re-homes it first because the coils are off — so the Pico's first render at startup brings the whole display up in throttled batches. That render always happens: `mode` starts as `MODE_LAYOUT`, `minutes` starts as `None` (forcing a render on the first tick), and a missing/invalid layout config falls back to the default `Clock`. Text shorter than the display is space-padded, and a `D ' '` homes a module like any other character. Until then a module simply holds the flap it last showed. Only a pairing-mode long press or an explicit `I` homes a module outside the Pico's throttled dispatch, and both are deliberate, one module at a time (`I` from `home_all()` is throttled).
 - `max_concurrent_modules` defaults to `4` and is configurable via `GET /api/max_concurrent_modules` / `POST /api/setup/max_concurrent_modules` (SetupPage "Max Modules Moving at Once"). Lowering it trades display update latency for lower peak power draw.
 
 ## ATtiny84 I2C Protocol
@@ -281,10 +284,11 @@ Character set (45 chars): ` ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:-!?/°`
 ## Physical Button (per module)
 
 Each ATtiny84 module has a physical button (`BUTTON_PIN`), independent of I2C/the Pico:
-- **Short press** — advances that module one character forward through `char_set` (`next_char()`), wrapping at the end. Coils stay energized after the step (like `keep_energized`) so repeated presses don't each pay for a re-home; unlike a Pico-driven hold there's no guaranteed follow-up command, so it auto-de-energizes after `BUTTON_IDLE_TIMEOUT_MS` (10s) of inactivity, or immediately once a `D` command from the Pico governs the hold instead. Useful for manually calibrating/testing a single module.
+- **Short press (paired module)** — advances that module one character forward through `char_set` (`next_char()`), wrapping at the end. Coils stay energized after the step (like `keep_energized`) so repeated presses don't each pay for a re-home; unlike a Pico-driven hold there's no guaranteed follow-up command, so it auto-de-energizes after `BUTTON_IDLE_TIMEOUT_MS` (10s) of inactivity, or immediately once a `D` command from the Pico governs the hold instead. Useful for manually calibrating/testing a single module.
+- **Short press (unpaired module, EEPROM address `0xFF`)** — displays `?` (`display_char('?')`) instead of stepping, homing first since the coils are off. It's the on-demand "the electronics work" check for a fresh module, since modules no longer home at boot (see Energy Saving). `apply_short_press()` in `attiny_protocol.h` picks between the two.
 - **Long press (3s)** — enters pairing mode: sets the module's I2C address to `0x10` and re-homes as visual confirmation.
 
-A fresh module (`EEPROM_I2C_ADDRESS` unset, i.e. `0xFF`) does **not** join the I2C bus at boot — it stays off the bus until the user long-presses the button to explicitly enter pairing mode. This keeps multiple newly wired-up modules from all defaulting to the same `0x10` address (and colliding on the bus) before they've been individually assigned a real address. It still homes at boot like any paired module (visible confirmation it's alive) and then displays `?` to show it isn't paired yet; entering pairing mode re-homes and displays `P` to show it's ready to be assigned a real address by the Pico.
+A fresh module (`EEPROM_I2C_ADDRESS` unset, i.e. `0xFF`) does **not** join the I2C bus at boot — it stays off the bus until the user long-presses the button to explicitly enter pairing mode. This keeps multiple newly wired-up modules from all defaulting to the same `0x10` address (and colliding on the bus) before they've been individually assigned a real address. Like any module it does not home at boot — a batch of fresh modules powered together must not all home at once, and it's off the bus so the Pico can't throttle it. Instead a short press shows `?` (a per-module sign of life); entering pairing mode re-homes and displays `P` to show it's ready to be assigned a real address by the Pico. After pairing mode the EEPROM address is `0x10`, so the module counts as paired and short presses step characters again.
 
 ## Deploying to Pico
 
@@ -407,11 +411,11 @@ All three are gitignored.
 ## Testing & Simulation
 
 - **ATtiny84 host unit tests:** `cd firmware/attiny84/test-host && python3 -m platformio test -e native`
-  (26 characterization tests + 1 toolchain-harness check, PlatformIO `native`
+  (characterization tests + 1 toolchain-harness check, PlatformIO `native`
   env + ArduinoFake + Unity). Covers the extracted headers
   `split_flap_controller.h` (stepper timing, homing state machine,
   `display_char`/`next_char`) and `attiny_protocol.h` (`I/D/S/O/C/A` command
-  handling, `module_status` byte layout, `classify_button_press`).
+  handling, `module_status` byte layout, `classify_button_press`, `apply_short_press`).
 - **ATtiny84 C++11 check:** `firmware/attiny84/check-cxx11.sh` — syntax-checks
   both extracted headers at `-std=gnu++11 -Wall -Wextra -Werror` (what
   ATTinyCore 1.5.2 builds them with). Neither the host suite nor the simulator

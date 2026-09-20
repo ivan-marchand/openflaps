@@ -178,6 +178,29 @@ void test_classify_button_press_boundaries(void) {
     TEST_ASSERT_EQUAL_INT((int)ButtonAction::PAIRING,   (int)classify_button_press(3000));
 }
 
+// A short press on an unpaired module shows '?' (electronics confirmation)
+// instead of stepping through the character set.
+void test_short_press_unpaired_shows_question_mark(void) {
+    SplitFlapController c = make_controller();
+    c.setup(10, 0);
+
+    apply_short_press(c, /*is_paired=*/false);
+
+    TEST_ASSERT_EQUAL_CHAR('?', c.current_char());
+    TEST_ASSERT_TRUE(c.is_busy());
+}
+
+// A short press on a paired module still steps one character (calibration).
+void test_short_press_paired_steps_one_char(void) {
+    SplitFlapController c = make_controller();
+    c.setup(10, 0);
+    TEST_ASSERT_EQUAL_CHAR(' ', c.current_char());
+
+    apply_short_press(c, /*is_paired=*/true);
+
+    TEST_ASSERT_EQUAL_CHAR('A', c.current_char());
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_cmd_S_sets_speed_and_requests_persist);
@@ -195,5 +218,7 @@ int main(int, char **) {
     RUN_TEST(test_cmd_P_deenergizes_when_idle);
     RUN_TEST(test_cmd_P_is_noop_while_busy);
     RUN_TEST(test_classify_button_press_boundaries);
+    RUN_TEST(test_short_press_unpaired_shows_question_mark);
+    RUN_TEST(test_short_press_paired_steps_one_char);
     return UNITY_END();
 }

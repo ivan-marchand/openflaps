@@ -85,3 +85,16 @@ inline ButtonAction classify_button_press(uint32_t press_duration_ms) {
     if (press_duration_ms >= DEBOUNCE_MS) return ButtonAction::NEXT_CHAR;
     return ButtonAction::NONE;
 }
+
+// Short-press action (mirrors handle_button()'s short-press branch). A paired
+// module steps one character forward for manual calibration/testing. An
+// unpaired module shows '?' instead: it does not home at boot (so a batch of
+// fresh modules can't all home at once), and this gives the user an
+// on-demand confirmation that the electronics work.
+inline void apply_short_press(SplitFlapController& controller, bool is_paired) {
+    if (is_paired) {
+        controller.next_char();
+    } else {
+        controller.display_char('?');
+    }
+}

@@ -123,7 +123,7 @@ void handle_button() {
     press_time = btn_press_time;
     interrupts();
     if (millis() - press_time >= DEBOUNCE_MS) {
-      controller.next_char();
+      apply_short_press(controller, EEPROM.read(EEPROM_I2C_ADDRESS) != 0xFF);
     }
   }
 }
@@ -158,8 +158,8 @@ void setup() {
   // (EEPROM_I2C_ADDRESS set). A fresh/unpaired module stays off the I2C bus
   // until the user long-presses the button to explicitly enter pairing mode
   // (enter_pairing_mode()); this avoids multiple freshly wired-up modules all
-  // defaulting to the same 0x10 address at once. It still homes below like
-  // any other module, so it's visibly alive while waiting to be paired.
+  // defaulting to the same 0x10 address at once. It doesn't home at boot
+  // either (see below); a short press shows '?' as a sign of life.
   uint8_t i2c_address = EEPROM.read(EEPROM_I2C_ADDRESS);
   bool is_paired = (i2c_address != 0xFF);
   if (is_paired) {
@@ -182,10 +182,12 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(BUTTON_PIN), btn_isr, CHANGE);
 
   controller.setup(speed, offset);
-  controller.initialize();  // home at boot so a fresh module visibly works
-  if (!is_paired) {
-    controller.display_char('?');  // not paired yet; long-press to pair
-  }
+  // Do NOT home at boot: every module on the bus would home at the same time,
+  // bypassing the Pico's max_concurrent_modules limit. Stay de-energized
+  // instead, so the first D command re-homes first (the Pico dispatches those
+  // throttled) -- and an unpaired module homes only when its button is
+  // pressed (short press shows '?', long press enters pairing mode).
+  controller.power_down();
 
   // Display boot message is Serial debug port is available
   DBG_WAIT_FOR_SERIAL();

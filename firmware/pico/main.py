@@ -689,6 +689,26 @@ def row_lengths_for(count):
         return []
     return [min(row_width, count - i) for i in range(0, count, row_width)]
 
+async def dispatch_throttled(items, send):
+    # Send one command per item -- send(*item), where item[0] is the module
+    # address -- but only keep up to max_concurrent_modules modules busy at a
+    # time, so at most that many stepper motors draw current simultaneously,
+    # capping peak power draw. A module that finishes (per its busy flag)
+    # frees a slot for the next queued item. Every command that starts a
+    # move or a homing run (D, I) must go through here.
+    limit = max(1, max_concurrent_modules)
+    queue = list(items)
+    in_flight = []
+    while queue or in_flight:
+        while queue and len(in_flight) < limit:
+            item = queue.pop(0)
+            send(*item)
+            await asyncio.sleep_ms(20)
+            in_flight.append(item[0])
+        if in_flight:
+            await asyncio.sleep_ms(20)
+            in_flight = [a for a in in_flight if is_module_busy(a)]
+
 async def print_string(s: str, keep_energized=False):
     # keep_energized: bool, or a list/tuple of one bool per character of s.
     print(f"Displaying: {s}")
@@ -744,31 +764,21 @@ async def print_string(s: str, keep_energized=False):
     # Dispatch leftmost (highest address) first, like natural left-to-right writing.
     queue.reverse()
 
-    # Only dispatch up to max_concurrent_modules moves at a time so that at
-    # most that many stepper motors draw current simultaneously, capping peak
-    # power draw. Modules that have finished moving (per their busy flag)
-    # free up a slot for the next queued character.
-    limit = max(1, max_concurrent_modules)
-    in_flight = []
-    while queue or in_flight:
-        while queue and len(in_flight) < limit:
-            addr, c, ke = queue.pop(0)
-            print_char(addr, c, ke)
-            await asyncio.sleep_ms(20)
-            in_flight.append(addr)
-        if in_flight:
-            await asyncio.sleep_ms(20)
-            in_flight = [a for a in in_flight if is_module_busy(a)]
+    await dispatch_throttled(queue, print_char)
+
+def send_home(address):
+    try:
+        i2c.writeto(address, b'I\x00')
+    except:
+        print(f"Unable Home display {address}")
 
 async def home_all():
     global last_displayed_chars
-    for address in i2c.scan():
-        try:
-            i2c.writeto(address, b'I\x00')
-        except:
-            print(f"Unable Home display {address}")
-        await asyncio.sleep_ms(20)
+    # Homing invalidates any assumption about physical position.
     last_displayed_chars = {}
+    # Throttled like a display update: an unthrottled sweep would have every
+    # module homing (and drawing current) at once.
+    await dispatch_throttled([(address,) for address in i2c.scan()], send_home)
 
 def read_module_params(address):
     try:
@@ -997,6 +1007,15 @@ led_on = False
 last_led_toggle_ms = 0
 cached_module_count = 0
 
+# Module addresses seen by the last bus recheck. A module that shows up later
+# (powered after the Pico, or plugged in) has never been sent anything, and
+# since modules no longer home themselves at boot it would sit unhomed and
+# blank until the next render -- up to a minute in layout mode, forever in
+# text mode. update_led() flags it here and tick() re-dispatches the current
+# display; last_displayed_chars keeps that cheap (only new modules get a D).
+known_module_addresses = set()
+redisplay_pending = False
+
 # ----------------------------
 # Boot
 # ----------------------------
@@ -1015,7 +1034,8 @@ else:
     print("I2C devices:", [hex(a) for a in s])
 i2c_ok = bool(s)
 last_i2c_check = time.time()
-cached_module_count = len(get_module_addresses())
+known_module_addresses = set(get_module_addresses())
+cached_module_count = len(known_module_addresses)
 
 wlan, ip = connect_wifi()
 _synced = sync_time()
@@ -1650,6 +1670,7 @@ async def update_led():
        - off:        neither
     """
     global i2c_ok, last_i2c_check, led_on, last_led_toggle_ms, cached_module_count
+    global known_module_addresses, redisplay_pending
 
     now = time.time()
     if now - last_i2c_check >= LED_I2C_RECHECK_INTERVAL:
@@ -1660,7 +1681,16 @@ async def update_led():
             # from BASE_ADDR" count: a module parked in pairing mode at 0x10
             # keeps the LED solid but must not count toward module_count.
             i2c_ok = bool(i2c.scan())
-            cached_module_count = len(get_module_addresses())
+            addresses = get_module_addresses()
+            cached_module_count = len(addresses)
+            new_addresses = [a for a in addresses if a not in known_module_addresses]
+            if new_addresses:
+                # Forget what we last sent them: a module that came back (e.g.
+                # rebooted) must not be skipped as "unchanged".
+                for a in new_addresses:
+                    last_displayed_chars.pop(a, None)
+                redisplay_pending = True
+            known_module_addresses = set(addresses)
 
     wifi_ok = bool(wlan and wlan.isconnected())
 
@@ -1680,18 +1710,23 @@ async def update_led():
 
 
 async def tick():
-    global next_ntp_sync
+    global next_ntp_sync, redisplay_pending
     now = time.time()
+    redisplay = redisplay_pending
+    redisplay_pending = False
 
     if mode == MODE_LAYOUT:
         tokens = layout_tokens_cache[active_layout_name]
         lt = time.localtime(now + tz.get_offset(current_timezone))
         current_minutes = lt[4]
-        needs_render = current_minutes != minutes
+        needs_render = redisplay or current_minutes != minutes
         if layout.uses_weather(tokens) and now - last_weather_update >= WEATHER_UPDATE_INTERVAL:
             needs_render = True
         if needs_render:
             await render_active_layout()
+    elif redisplay and last_text:
+        async with mutation_lock:
+            await print_string(last_text)
 
     # Periodic NTP re-sync
     if now >= next_ntp_sync:
