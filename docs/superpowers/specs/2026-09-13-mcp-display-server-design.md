@@ -1,5 +1,7 @@
 # OpenFlaps MCP Display Server — Design
 
+> **Auth update (2026-09-20):** the single shared-password login described below was replaced by Google sign-in with admin/manager roles. See `2026-09-20-mcp-google-sso-design.md`.
+
 ## Purpose
 
 Let Claude clients (Claude Desktop, the Claude phone app, and Claude Code)

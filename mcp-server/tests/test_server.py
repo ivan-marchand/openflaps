@@ -1,12 +1,15 @@
+import base64
+import hashlib
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
 
 from mcp.server.mcpserver.exceptions import ToolError
-from mcp_server.config import Config
 from mcp_server.pico_client import PicoClient
 from mcp_server.server import DISPLAY_CHARSET, build_app, build_server
+from tests.helpers import FakeOIDC, make_config
 
 EXPECTED_TOOL_NAMES = {
     "set_text",
@@ -28,16 +31,6 @@ EXPECTED_TOOL_NAMES = {
     "power_down_module",
     "update_module",
 }
-
-
-def make_config(tmp_path: Path) -> Config:
-    return Config(
-        pico_base_url="http://pico.local",
-        auth_password="secret",
-        public_url="https://mcp.example.com",
-        token_store_path=tmp_path / "tokens.json",
-        port=8420,
-    )
 
 
 async def test_all_expected_tools_are_registered(tmp_path: Path):
@@ -230,3 +223,128 @@ async def test_set_text_tool_description_lists_the_supported_characters(tmp_path
     set_text_tool = next(tool for tool in tools if tool.name == "set_text")
     assert set_text_tool.description
     assert DISPLAY_CHARSET in set_text_tool.description
+
+
+async def test_favicon_is_served(tmp_path: Path):
+    app = build_app(make_config(tmp_path), google_oidc=FakeOIDC())
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://mcp.example.com") as client:
+        response = await client.get("/favicon.svg")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/svg+xml")
+
+
+async def test_favicon_ico_is_also_served(tmp_path: Path):
+    app = build_app(make_config(tmp_path), google_oidc=FakeOIDC())
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://mcp.example.com") as client:
+        response = await client.get("/favicon.ico")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/svg+xml")
+
+
+async def test_wordmark_is_served(tmp_path: Path):
+    app = build_app(make_config(tmp_path), google_oidc=FakeOIDC())
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://mcp.example.com") as client:
+        response = await client.get("/wordmark.svg")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/svg+xml")
+
+
+async def test_login_without_a_pending_request_is_rejected(tmp_path: Path):
+    app = build_app(make_config(tmp_path), google_oidc=FakeOIDC())
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://mcp.example.com") as client:
+        response = await client.get("/login?request_id=nope")
+
+    assert response.status_code == 400
+
+
+async def test_admin_page_sends_signed_out_visitors_to_google(tmp_path: Path):
+    app = build_app(make_config(tmp_path), google_oidc=FakeOIDC())
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="https://mcp.example.com", follow_redirects=False
+    ) as client:
+        response = await client.get("/admin")
+
+    assert response.status_code == 302
+    assert response.headers["location"].startswith("https://accounts.google.test/")
+
+
+async def test_full_connector_login_flow_issues_a_working_token(tmp_path: Path):
+    app = build_app(make_config(tmp_path), google_oidc=FakeOIDC())
+    redirect_uri = "https://claude.example.com/callback"
+    verifier = "v" * 64
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="https://mcp.example.com", follow_redirects=False
+    ) as client:
+        registration = await client.post(
+            "/register",
+            json={
+                "redirect_uris": [redirect_uri],
+                "client_name": "test-client",
+                "grant_types": ["authorization_code"],
+                "token_endpoint_auth_method": "none",
+            },
+        )
+        client_id = registration.json()["client_id"]
+
+        authorize = await client.get(
+            "/authorize",
+            params={
+                "client_id": client_id,
+                "redirect_uri": redirect_uri,
+                "response_type": "code",
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+                "state": "xyz",
+            },
+        )
+        assert authorize.status_code in (302, 307)
+
+        login = await client.get(authorize.headers["location"])
+        assert login.status_code == 302
+        assert login.headers["location"].startswith("https://accounts.google.test/")
+        state = parse_qs(urlparse(login.headers["location"]).query)["state"][0]
+
+        callback = await client.get("/auth/google/callback", params={"code": "google-code", "state": state})
+        assert callback.status_code == 302
+        final = urlparse(callback.headers["location"])
+        assert f"{final.scheme}://{final.netloc}{final.path}" == redirect_uri
+        query = parse_qs(final.query)
+        assert query["state"] == ["xyz"]
+
+        token = await client.post(
+            "/token",
+            data={
+                "grant_type": "authorization_code",
+                "code": query["code"][0],
+                "redirect_uri": redirect_uri,
+                "client_id": client_id,
+                "code_verifier": verifier,
+            },
+        )
+        assert token.status_code == 200
+        access_token = token.json()["access_token"]
+
+        ping = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+        headers = {"Accept": "application/json, text/event-stream"}
+        # ASGITransport does not run the app's lifespan, which is what starts the
+        # streamable-HTTP session manager the accepted request reaches after auth.
+        async with app.router.lifespan_context(app):
+            accepted = await client.post(
+                "/mcp", json=ping, headers={**headers, "Authorization": f"Bearer {access_token}"}
+            )
+            rejected = await client.post(
+                "/mcp", json=ping, headers={**headers, "Authorization": "Bearer not-a-real-token"}
+            )
+
+    assert accepted.status_code != 401
+    assert rejected.status_code == 401

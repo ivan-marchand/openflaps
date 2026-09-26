@@ -1,15 +1,11 @@
 from __future__ import annotations
 
-import html
 import json
 import secrets
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Awaitable, Callable
-
-from starlette.requests import Request
-from starlette.responses import HTMLResponse, RedirectResponse, Response
+from typing import Any, Callable
 
 from mcp.server.auth.provider import (
     AccessToken,
@@ -23,13 +19,23 @@ from mcp.server.auth.provider import (
 )
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
-LoginHandler = Callable[[Request], Awaitable[Response]]
+from .storage import write_json_atomic
+from .users import ROLE_ADMIN, UserStore
+
+PENDING_TTL_SECONDS = 600
+SCOPE_ADMIN = "openflap:admin"
+SCOPE_MANAGE = "openflap:manage"
+
+
+def scope_for_role(role: str) -> str:
+    return SCOPE_ADMIN if role == ROLE_ADMIN else SCOPE_MANAGE
 
 
 @dataclass
 class _PendingAuthorization:
     client: OAuthClientInformationFull
     params: AuthorizationParams
+    created_at: float
 
 
 class _Store:
@@ -55,28 +61,31 @@ class _Store:
         }
 
     def save(self) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        data = {
-            "clients": self.clients,
-            "auth_codes": {code: value.model_dump(mode="json") for code, value in self.auth_codes.items()},
-            "access_tokens": {
-                token: value.model_dump(mode="json") for token, value in self.access_tokens.items()
+        write_json_atomic(
+            self._path,
+            {
+                "clients": self.clients,
+                "auth_codes": {code: value.model_dump(mode="json") for code, value in self.auth_codes.items()},
+                "access_tokens": {
+                    token: value.model_dump(mode="json") for token, value in self.access_tokens.items()
+                },
             },
-        }
-        tmp_path = self._path.with_suffix(self._path.suffix + ".tmp")
-        tmp_path.write_text(json.dumps(data, indent=2))
-        tmp_path.replace(self._path)
+        )
 
 
-class SingleUserOAuthProvider(OAuthAuthorizationServerProvider[AuthorizationCode, RefreshToken, AccessToken]):
-    """Minimal single-user OAuth 2.1 provider: one password gates every login.
+class OAuthProvider(OAuthAuthorizationServerProvider[AuthorizationCode, RefreshToken, AccessToken]):
+    """OAuth 2.1 authorization server whose login step is Google sign-in.
 
-    Refresh tokens and the identity-assertion grant are intentionally unsupported —
-    this is a single personal user, not a multi-tenant authorization server.
+    Codes and tokens are bound to the signed-in email (`subject`). Every token
+    lookup re-checks that email against the allowlist, so removing a manager
+    revokes their access on the next request. Refresh tokens and the
+    identity-assertion grant are intentionally unsupported.
     """
 
-    def __init__(self, token_store_path: Path):
+    def __init__(self, token_store_path: Path, users: UserStore, clock: Callable[[], float] = time.time):
         self._store = _Store(token_store_path)
+        self._users = users
+        self._clock = clock
         self._pending: dict[str, _PendingAuthorization] = {}
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
@@ -89,50 +98,68 @@ class SingleUserOAuthProvider(OAuthAuthorizationServerProvider[AuthorizationCode
 
     async def authorize(self, client: OAuthClientInformationFull, params: AuthorizationParams) -> str:
         request_id = secrets.token_urlsafe(16)
-        self._pending[request_id] = _PendingAuthorization(client=client, params=params)
+        self._pending[request_id] = _PendingAuthorization(
+            client=client, params=params, created_at=self._clock()
+        )
         return f"/login?request_id={request_id}"
 
     def get_pending(self, request_id: str) -> _PendingAuthorization | None:
+        now = self._clock()
+        self._pending = {
+            rid: pending for rid, pending in self._pending.items() if now - pending.created_at <= PENDING_TTL_SECONDS
+        }
         return self._pending.get(request_id)
 
-    def complete_pending(self, request_id: str) -> str:
-        pending = self._pending.pop(request_id)
+    def complete_pending(self, request_id: str, email: str) -> str:
+        pending = self.get_pending(request_id)
+        if pending is None:
+            raise KeyError(request_id)
+        del self._pending[request_id]
         code_value = secrets.token_urlsafe(32)
-        auth_code = AuthorizationCode(
+        self._store.auth_codes[code_value] = AuthorizationCode(
             code=code_value,
             scopes=pending.params.scopes or [],
-            expires_at=time.time() + 600,
+            expires_at=self._clock() + PENDING_TTL_SECONDS,
             client_id=pending.client.client_id,
             code_challenge=pending.params.code_challenge,
             redirect_uri=pending.params.redirect_uri,
             redirect_uri_provided_explicitly=pending.params.redirect_uri_provided_explicitly,
+            subject=email.strip().lower(),
         )
-        self._store.auth_codes[code_value] = auth_code
         self._store.save()
         return construct_redirect_uri(str(pending.params.redirect_uri), code=code_value, state=pending.params.state)
 
     async def load_authorization_code(
         self, client: OAuthClientInformationFull, authorization_code: str
     ) -> AuthorizationCode | None:
-        return self._store.auth_codes.get(authorization_code)
+        code = self._store.auth_codes.get(authorization_code)
+        if code is not None and code.expires_at < self._clock():
+            del self._store.auth_codes[authorization_code]
+            self._store.save()
+            return None
+        return code
 
     async def exchange_authorization_code(
         self, client: OAuthClientInformationFull, authorization_code: AuthorizationCode
     ) -> OAuthToken:
-        del self._store.auth_codes[authorization_code.code]
+        if self._store.auth_codes.pop(authorization_code.code, None) is None:
+            raise TokenError(error="invalid_grant", error_description="This authorization code has already been used.")
+        email = authorization_code.subject
+        role = self._users.role_for(email) if email else None
+        if role is None:
+            self._store.save()
+            raise TokenError(error="invalid_grant", error_description="This account is not allowed to use this display.")
+        scope = scope_for_role(role)
         token_value = secrets.token_urlsafe(32)
         self._store.access_tokens[token_value] = AccessToken(
             token=token_value,
             client_id=client.client_id,
-            scopes=authorization_code.scopes,
+            scopes=[scope],
             expires_at=None,
+            subject=email,
         )
         self._store.save()
-        return OAuthToken(
-            access_token=token_value,
-            token_type="Bearer",
-            scope=" ".join(authorization_code.scopes) or None,
-        )
+        return OAuthToken(access_token=token_value, token_type="Bearer", scope=scope)
 
     async def load_refresh_token(
         self, client: OAuthClientInformationFull, refresh_token: str
@@ -150,52 +177,14 @@ class SingleUserOAuthProvider(OAuthAuthorizationServerProvider[AuthorizationCode
         raise TokenError(error="unsupported_grant_type", error_description="Identity assertion grant is not supported.")
 
     async def load_access_token(self, token: str) -> AccessToken | None:
-        return self._store.access_tokens.get(token)
+        stored = self._store.access_tokens.get(token)
+        if stored is None or not stored.subject:
+            return None
+        role = self._users.role_for(stored.subject)
+        if role is None:
+            return None
+        return stored.model_copy(update={"scopes": [scope_for_role(role)]})
 
     async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
         self._store.access_tokens.pop(token.token, None)
         self._store.save()
-
-
-def _render_login_page(request_id: str, error: str | None = None) -> str:
-    error_html = f'<p style="color:red">{html.escape(error)}</p>' if error else ""
-    safe_request_id = html.escape(request_id)
-    return f"""<!doctype html>
-<html>
-<head><title>OpenFlaps MCP Login</title></head>
-<body>
-<h1>OpenFlaps MCP Login</h1>
-{error_html}
-<form method="post">
-<input type="hidden" name="request_id" value="{safe_request_id}">
-<label>Password: <input type="password" name="password" autofocus></label>
-<button type="submit">Log in</button>
-</form>
-</body>
-</html>"""
-
-
-def build_login_handler(provider: SingleUserOAuthProvider, password: str) -> LoginHandler:
-    async def login(request: Request) -> Response:
-        if request.method == "GET":
-            request_id = request.query_params.get("request_id", "")
-            if provider.get_pending(request_id) is None:
-                return HTMLResponse("Unknown or expired login request.", status_code=400)
-            return HTMLResponse(_render_login_page(request_id))
-
-        form = await request.form()
-        request_id = str(form.get("request_id", ""))
-        submitted_password = str(form.get("password", ""))
-
-        if provider.get_pending(request_id) is None:
-            return HTMLResponse("Unknown or expired login request.", status_code=400)
-
-        if not secrets.compare_digest(submitted_password, password):
-            return HTMLResponse(
-                _render_login_page(request_id, error="Incorrect password."), status_code=401
-            )
-
-        redirect_uri = provider.complete_pending(request_id)
-        return RedirectResponse(url=redirect_uri, status_code=302)
-
-    return login

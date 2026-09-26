@@ -15,6 +15,12 @@
   letter-spacing: 0.1em;
 }
 
+.wordmark {
+  height: 22px;
+  width: auto;
+  display: block;
+}
+
 .mode-pill {
   font-family: 'Courier New', Courier, monospace;
   font-size: 0.75rem;

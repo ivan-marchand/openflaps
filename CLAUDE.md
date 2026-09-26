@@ -304,9 +304,9 @@ cd firmware/pico
 ```
 
 - **USB** finds the Pico on `/dev/cu.usbmodem*` (macOS) or `/dev/ttyACM*` (Linux), uploads
-  `main.py`, `tz.py`, `layout.py`, `index.html`, `setup.html`, `assets/index.js`, `assets/index.css` via
-  `mpremote`, then reboots. Requires `mpremote` (`pip install mpremote`).
-- **`--ota [host]`** (host defaults to `openflaps.local` via mDNS) zips those same seven
+  `main.py`, `tz.py`, `layout.py`, `index.html`, `favicon.svg`, `setup.html`, `assets/index.js`,
+  `assets/index.css` via `mpremote`, then reboots. Requires `mpremote` (`pip install mpremote`).
+- **`--ota [host]`** (host defaults to `openflaps.local` via mDNS) zips those same eight
   files (from `firmware/pico/`, so entry names match what the device expects) plus a
   generated `manifest.json` listing them, and POSTs the zip
   to `http://<host>/api/firmware/update` with `curl`; the Pico streams it straight to flash,
@@ -316,8 +316,8 @@ cd firmware/pico
 
   ```bash
   cd firmware/pico
-  echo '["main.py","tz.py","layout.py","index.html","setup.html","assets/index.js","assets/index.css"]' > manifest.json
-  zip -0 -r update.zip main.py tz.py layout.py index.html setup.html assets/index.js assets/index.css manifest.json
+  echo '["main.py","tz.py","layout.py","index.html","favicon.svg","setup.html","assets/index.js","assets/index.css"]' > manifest.json
+  zip -0 -r update.zip main.py tz.py layout.py index.html favicon.svg setup.html assets/index.js assets/index.css manifest.json
   rm manifest.json
   curl -X POST -H "Content-Type: application/zip" --data-binary @update.zip http://<host>/api/firmware/update
   ```
