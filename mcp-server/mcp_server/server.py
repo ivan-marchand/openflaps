@@ -1,18 +1,25 @@
 from __future__ import annotations
 
+import functools
 from urllib.parse import urlparse
 
 from pydantic import AnyHttpUrl
 from starlette.applications import Starlette
 
+from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 
-from .auth import SingleUserOAuthProvider, build_login_handler
+from .admin import AdminPage, AdminSessions
+from .auth import SCOPE_ADMIN, OAuthProvider
 from .config import Config
+from .google_oidc import GoogleOIDC
+from .login import GoogleLogin
+from .pages import favicon, favicon_ico, wordmark
 from .pico_client import PicoAPIError, PicoClient, PicoUnreachableError
+from .users import UserStore
 
 _LOCAL_HOST_PATTERNS = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
 _LOCAL_ORIGIN_PATTERNS = ["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"]
@@ -21,6 +28,48 @@ _LOCAL_ORIGIN_PATTERNS = ["http://127.0.0.1:*", "http://localhost:*", "http://[:
 # exactly (that's the hardware's fixed set of physical flaps). The Pico uppercases text
 # before display, so lowercase letters are fine here and normalized for this check only.
 DISPLAY_CHARSET = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:-!?/°"
+
+# Every registered tool must appear in exactly one of these sets
+# (tests/test_tool_roles.py enforces it), so a new tool can't ship unclassified.
+ADMIN_ONLY_TOOLS = frozenset(
+    {
+        "save_api_key",
+        "save_timezone",
+        "set_max_concurrent_modules",
+        "save_layout",
+        "save_layouts",
+        "update_module",
+    }
+)
+MANAGER_TOOLS = frozenset(
+    {
+        "set_text",
+        "set_layout",
+        "home",
+        "ask_claude",
+        "identify_module",
+        "power_down_module",
+        "get_state",
+        "get_modules",
+        "get_max_concurrent_modules",
+        "get_layout",
+        "get_timezone",
+        "get_layouts",
+    }
+)
+
+
+def admin_only(fn):
+    """Reject the call unless the caller's token carries the admin scope."""
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        token = get_access_token()
+        if token is None or SCOPE_ADMIN not in token.scopes:
+            raise ToolError("This tool requires the admin role.")
+        return fn(*args, **kwargs)
+
+    return wrapper
 
 
 def build_transport_security(config: Config) -> TransportSecuritySettings:
@@ -88,9 +137,20 @@ def _check_text_fits(pico: PicoClient, text: str) -> None:
     )
 
 
-def build_server(config: Config, pico_client: PicoClient | None = None) -> MCPServer:
+def build_server(
+    config: Config, pico_client: PicoClient | None = None, google_oidc: GoogleOIDC | None = None
+) -> MCPServer:
     pico = pico_client or PicoClient(config.pico_base_url)
-    provider = SingleUserOAuthProvider(config.token_store_path)
+    users = UserStore(config.users_path, config.admin_email)
+    provider = OAuthProvider(config.token_store_path, users)
+    oidc = google_oidc or GoogleOIDC(
+        config.google_client_id,
+        config.google_client_secret,
+        f"{config.public_url}/auth/google/callback",
+    )
+    admin_sessions = AdminSessions()
+    google_login = GoogleLogin(provider, oidc, users, admin_sessions, config.public_url)
+    admin_page = AdminPage(admin_sessions, users, config.public_url, begin_login=google_login.begin_admin_login)
 
     mcp = MCPServer(
         "openflap-display",
@@ -168,21 +228,25 @@ def build_server(config: Config, pico_client: PicoClient | None = None) -> MCPSe
         return _translate_errors(pico.get_timezone)
 
     @mcp.tool()
+    @admin_only
     def save_api_key(key: str) -> dict:
         """Set the Claude API key the Pico uses for its own /api/claude integration."""
         return _translate_errors(pico.save_api_key, key)
 
     @mcp.tool()
+    @admin_only
     def save_timezone(zone: str) -> dict:
         """Set the display's IANA timezone (e.g. 'America/New_York')."""
         return _translate_errors(pico.save_timezone, zone)
 
     @mcp.tool()
+    @admin_only
     def set_max_concurrent_modules(max_concurrent: int) -> dict:
         """Set the max number of modules allowed to move simultaneously."""
         return _translate_errors(pico.set_max_concurrent_modules, max_concurrent)
 
     @mcp.tool()
+    @admin_only
     def save_layout(char_per_row: int) -> dict:
         """Set characters per row; -1 keeps every module on a single row.
         Physical row layout only — not the content layout templates,
@@ -198,6 +262,7 @@ def build_server(config: Config, pico_client: PicoClient | None = None) -> MCPSe
         return _translate_errors(pico.get_layouts)
 
     @mcp.tool()
+    @admin_only
     def save_layouts(layouts: list[dict], active_layout: str | None = None) -> dict:
         """Replace the whole catalog of content layout templates in one call.
         layouts is a list of {"name": str, "template": str, "align": str}
@@ -229,16 +294,25 @@ def build_server(config: Config, pico_client: PicoClient | None = None) -> MCPSe
         return _translate_errors(pico.power_down_module, address)
 
     @mcp.tool()
+    @admin_only
     def update_module(address: int, new_address: int, speed: int, offset: int) -> dict:
         """Update a module's I2C address, speed, and offset calibration."""
         return _translate_errors(pico.update_module, address, new_address, speed, offset)
 
-    mcp.custom_route("/login", methods=["GET", "POST"])(
-        build_login_handler(provider, config.auth_password)
-    )
+    mcp.custom_route("/login", methods=["GET"])(google_login.login)
+    mcp.custom_route("/auth/google/callback", methods=["GET"])(google_login.callback)
+    mcp.custom_route("/admin", methods=["GET"])(admin_page.show)
+    mcp.custom_route("/admin/invite", methods=["POST"])(admin_page.invite)
+    mcp.custom_route("/admin/remove", methods=["POST"])(admin_page.remove)
+    mcp.custom_route("/admin/logout", methods=["POST"])(admin_page.logout)
+    mcp.custom_route("/favicon.svg", methods=["GET"])(favicon)
+    mcp.custom_route("/favicon.ico", methods=["GET"])(favicon_ico)
+    mcp.custom_route("/wordmark.svg", methods=["GET"])(wordmark)
 
     return mcp
 
 
-def build_app(config: Config) -> Starlette:
-    return build_server(config).streamable_http_app(transport_security=build_transport_security(config))
+def build_app(config: Config, google_oidc: GoogleOIDC | None = None) -> Starlette:
+    return build_server(config, google_oidc=google_oidc).streamable_http_app(
+        transport_security=build_transport_security(config)
+    )
