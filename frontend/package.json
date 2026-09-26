@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build && npm run copy",
-    "copy": "cp dist/index.html ../firmware/pico/index.html && cp dist/assets/index.js ../firmware/pico/assets/index.js && cp dist/assets/index.css ../firmware/pico/assets/index.css",
+    "copy": "cp dist/index.html ../firmware/pico/index.html && cp dist/favicon.svg ../firmware/pico/favicon.svg && cp dist/assets/index.js ../firmware/pico/assets/index.js && cp dist/assets/index.css ../firmware/pico/assets/index.css",
     "preview": "vite preview"
   },
   "dependencies": {

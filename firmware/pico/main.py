@@ -485,6 +485,7 @@ MIME_TYPES = {
     "css":  "text/css",
     "json": "application/json",
     "ico":  "image/x-icon",
+    "svg":  "image/svg+xml",
 }
 
 def parse_json_body(req):
@@ -1732,6 +1733,9 @@ async def handle_request(conn):
         elif route.startswith("/assets/"):
             filename = route.lstrip("/")
             await async_http_send_file(conn, filename)
+
+        elif route == "/favicon.svg":
+            await async_http_send_file(conn, "favicon.svg")
 
         elif route == "/" or route == "/index.html":
             await async_http_send_file(conn, "index.html")

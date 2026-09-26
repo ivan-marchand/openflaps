@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'preact/hooks'
 import { SplitFlapDisplay } from '../components/SplitFlapDisplay'
 import { api } from '../api'
+import wordmark from '../assets/wordmark.svg'
 import './ControlPage.css'
 
 export function ControlPage() {
@@ -52,7 +53,7 @@ export function ControlPage() {
   return (
     <div class="control-page">
       <div class="page-header">
-        <span class="page-title">▸ OPENFLAPS</span>
+        <img class="wordmark" src={wordmark} alt="OpenFlaps" width="213" height="26" />
         <span class="mode-pill">{state.mode}</span>
       </div>
 
