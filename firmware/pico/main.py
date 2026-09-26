@@ -18,6 +18,7 @@ import layout
 CONFIG_FILE = "wifi_config.json"
 API_CONFIG_FILE = "api_config.json"
 TIMEZONE_CONFIG_FILE = "timezone_config.json"
+LOCATION_CONFIG_FILE = "location_config.json"
 MAX_CONCURRENT_MODULES_CONFIG_FILE = "max_concurrent_modules_config.json"
 _LEGACY_ENERGY_CONFIG_FILE = "energy_config.json"  # pre-rename filename; migrated on first load, then removed
 LAYOUT_CONFIG_FILE = "layout_config.json"
@@ -56,9 +57,6 @@ led = Pin("LED", Pin.OUT)
 LED_I2C_RECHECK_INTERVAL = 5   # seconds between background I2C liveness scans
 LED_BLINK_SLOW_MS = 500        # WiFi connected, no I2C modules found
 LED_BLINK_FAST_MS = 150        # I2C modules found, WiFi not connected
-
-LAT = 0.0
-LON = 0.0
 
 NTP_RETRY_INTERVAL = 300    # seconds between NTP retries on failure
 NTP_SYNC_INTERVAL = 3600    # seconds between successful NTP syncs
@@ -122,6 +120,37 @@ def save_timezone(zone):
         return True
     except Exception as e:
         print("Failed to save timezone:", e)
+        return False
+
+def valid_location(lat, lon):
+    # bool is an int subclass; reject it so {"lat": true} isn't taken as 1
+    for v in (lat, lon):
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            return False
+    return -90 <= lat <= 90 and -180 <= lon <= 180
+
+def load_location():
+    # (lat, lon), or None when no location is saved -- get_weather() then
+    # falls back to detect_location().
+    try:
+        with open(LOCATION_CONFIG_FILE, "r") as f:
+            data = ujson.load(f)
+        lat, lon = data.get("lat"), data.get("lon")
+        if valid_location(lat, lon):
+            return (lat, lon)
+    except:
+        pass
+    return None
+
+def save_location(lat, lon):
+    global current_location
+    try:
+        with open(LOCATION_CONFIG_FILE, "w") as f:
+            ujson.dump({"lat": lat, "lon": lon}, f)
+        current_location = (lat, lon)
+        return True
+    except Exception as e:
+        print("Failed to save location:", e)
         return False
 
 def load_max_concurrent():
@@ -606,38 +635,65 @@ def dechunk_http_body(body: bytes) -> bytes:
 
     return b"".join(out)
 
+async def http_get_json(host, path):
+    reader, writer = await asyncio.wait_for(asyncio.open_connection(host, 80), 4)
+
+    request = (
+        "GET {} HTTP/1.1\r\n"
+        "Host: {}\r\n"
+        "Connection: close\r\n\r\n"
+    ).format(path, host)
+
+    writer.write(request.encode())
+    await writer.drain()
+
+    response = b""
+    while True:
+        chunk = await asyncio.wait_for(reader.read(1024), 4)
+        if not chunk:
+            break
+        response += chunk
+
+    writer.close()
+    try:
+        await writer.wait_closed()
+    except AttributeError:
+        pass
+
+    headers, body = response.split(b"\r\n\r\n", 1)
+    if b"transfer-encoding: chunked" in headers.lower():
+        body = dechunk_http_body(body)
+    return ujson.loads(body)
+
+async def detect_location():
+    # Approximate (city-level) location from the public IP address, via
+    # ip-api.com's free plain-HTTP endpoint. Returns (lat, lon) or None.
+    try:
+        data = await http_get_json("ip-api.com", "/json/?fields=status,lat,lon")
+        lat, lon = data.get("lat"), data.get("lon")
+        if data.get("status") == "success" and valid_location(lat, lon):
+            return (lat, lon)
+        print("Location detect failed:", data)
+    except Exception as e:
+        print("Location detect error:", e)
+    return None
+
 async def get_weather():
-    host = "api.open-meteo.com"
-    path = f"/v1/forecast?latitude={LAT}&longitude={LON}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,wind_direction_10m"
+    global detected_location
+    # A saved location wins; otherwise fall back to one detected from the
+    # public IP (looked up once per boot, retried on the next weather
+    # refresh if it fails).
+    loc = current_location or detected_location
+    if loc is None:
+        loc = await detect_location()
+        if loc is None:
+            return None
+        detected_location = loc
+    lat, lon = loc
+    path = f"/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,wind_direction_10m"
 
     try:
-        reader, writer = await asyncio.wait_for(asyncio.open_connection(host, 80), 4)
-
-        request = (
-            "GET {} HTTP/1.1\r\n"
-            "Host: {}\r\n"
-            "Connection: close\r\n\r\n"
-        ).format(path, host)
-
-        writer.write(request.encode())
-        await writer.drain()
-
-        response = b""
-        while True:
-            chunk = await asyncio.wait_for(reader.read(1024), 4)
-            if not chunk:
-                break
-            response += chunk
-
-        writer.close()
-        try:
-            await writer.wait_closed()
-        except AttributeError:
-            pass
-
-        body = dechunk_http_body(response.split(b"\r\n\r\n", 1)[1])
-        data = ujson.loads(body)
-
+        data = await http_get_json("api.open-meteo.com", path)
         cur = data["current"]
         return {
             "temp_c": cur.get("temperature_2m"),
@@ -1041,6 +1097,8 @@ wlan, ip = connect_wifi()
 _synced = sync_time()
 next_ntp_sync = time.time() + (NTP_SYNC_INTERVAL if _synced else NTP_RETRY_INTERVAL)
 current_timezone = load_timezone()
+current_location = load_location()
+detected_location = None  # set by get_weather() / POST /api/location/detect; never saved
 api_key = load_api_key()
 max_concurrent_modules = load_max_concurrent()
 char_per_row = load_char_per_row()
@@ -1331,7 +1389,7 @@ async def handle_firmware_update(conn, header_bytes, body_prefix):
 # Request handler
 # ----------------------------
 async def handle_request(conn):
-    global mode, last_text, status_line, current_timezone, minutes, last_weather_update
+    global mode, last_text, status_line, current_timezone, minutes, last_weather_update, detected_location
     try:
         header_bytes, body_prefix = await async_read_http_headers(conn)
         if not header_bytes:
@@ -1472,6 +1530,20 @@ async def handle_request(conn):
                     save_timezone(new_zone)
                 await async_http_send_json(conn, {"ok": True})
 
+        elif route == "/api/setup/location" and method == "POST":
+            data = parse_json_body(req)
+            lat, lon = data.get("lat"), data.get("lon")
+            if not valid_location(lat, lon):
+                await async_http_send_json(conn, {"ok": False, "error": "Latitude must be a number in [-90, 90] and longitude in [-180, 180]."}, code="400 Bad Request")
+            else:
+                async with mutation_lock:
+                    ok = save_location(lat, lon)
+                if ok:
+                    last_weather_update = 0  # refetch for the new location on the next tick
+                    await async_http_send_json(conn, {"ok": True})
+                else:
+                    await async_http_send_json(conn, {"ok": False, "error": "Failed to save location."}, code="500 Internal Server Error")
+
         elif route == "/api/modules/identify" and method == "POST":
             data = parse_json_body(req)
             address = data.get("address")
@@ -1532,6 +1604,27 @@ async def handle_request(conn):
         elif route == "/api/timezone" and method == "GET":
             zones = tz.zone_list()
             await async_http_send_json(conn, {"zones": zones, "current": current_timezone})
+
+        elif route == "/api/location" and method == "GET":
+            if current_location is not None:
+                lat, lon, source = current_location[0], current_location[1], "saved"
+            elif detected_location is not None:
+                lat, lon, source = detected_location[0], detected_location[1], "detected"
+            else:
+                lat, lon, source = None, None, None
+            await async_http_send_json(conn, {"lat": lat, "lon": lon, "source": source})
+
+        elif route == "/api/location/detect" and method == "POST":
+            # Network call only, no I2C or config write -- no mutation_lock.
+            # Doesn't save: the user reviews the result and saves it explicitly.
+            loc = await detect_location()
+            if loc is None:
+                await async_http_send_json(conn, {"ok": False, "error": "Could not detect location."}, code="502 Bad Gateway")
+            else:
+                if current_location is None and detected_location != loc:
+                    detected_location = loc
+                    last_weather_update = 0  # refetch weather for it on the next tick
+                await async_http_send_json(conn, {"ok": True, "lat": loc[0], "lon": loc[1]})
 
         elif route == "/api/max_concurrent_modules" and method == "GET":
             await async_http_send_json(conn, {"max_concurrent": max_concurrent_modules})

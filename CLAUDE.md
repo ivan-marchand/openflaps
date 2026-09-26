@@ -49,7 +49,7 @@ already in `firmware/pico/` — so run `npm run build` first or the device gets 
 
 **Hash routing:**
 - `/#/` — ControlPage (set text, change mode)
-- `/#/setup` — SetupPage (timezone, Claude API key, WiFi)
+- `/#/setup` — SetupPage (timezone, weather location, Claude API key, WiFi)
 - `/#/modules` — ModulesPage (calibrate I2C modules)
 
 **Frontend API client** (`frontend/src/api.js`):
@@ -65,6 +65,9 @@ already in `firmware/pico/` — so run `npm run build` first or the device gets 
 | `api.saveApiKey(key)` | `POST /api/setup/apikey` |
 | `api.getTimezone()` | `GET /api/timezone` |
 | `api.saveTimezone(zone)` | `POST /api/setup/timezone` |
+| `api.getLocation()` | `GET /api/location` |
+| `api.saveLocation(lat, lon)` | `POST /api/setup/location` |
+| `api.detectLocation()` | `POST /api/location/detect` |
 | `api.getModules()` | `GET /api/modules` |
 | `api.updateModule(...)` | `POST /api/modules` |
 | `api.identifyModule(addr)` | `POST /api/modules/identify` |
@@ -93,6 +96,7 @@ Config is stored in JSON files on Pico flash — all are gitignored:
 - `wifi_config.json` — `{"ssid": "...", "password": "..."}`
 - `api_config.json` — `{"key": "sk-ant-..."}` — Claude API key
 - `timezone_config.json` — `{"zone": "America/New_York"}` — IANA timezone name
+- `location_config.json` — `{"lat": 51.5074, "lon": -0.1278}` — weather location in decimal degrees (lat in [-90, 90], lon in [-180, 180]), set via SetupPage's "Weather Location" card (`POST /api/setup/location`). Deliberately not hardcoded in the repo. When absent, `get_weather()` falls back to an approximate location from the public IP (`detect_location()`, ip-api.com's free plain-HTTP endpoint), looked up once per boot and kept in memory only (`detected_location`, never saved; retried on the next weather refresh if it fails — weather fields show dashes meanwhile). `GET /api/location` returns the effective `lat`/`lon` plus `source` (`"saved"`, `"detected"` or `null`). The card's DETECT button calls `POST /api/location/detect`, which returns a fresh lookup without saving it, so the user reviews it before pressing Save. Saving a new location resets `last_weather_update` so the next tick refetches.
 - `max_concurrent_modules_config.json` — `{"max_concurrent": 4}` — max modules allowed to move simultaneously. Renamed from `energy_config.json`; `load_max_concurrent()` migrates an existing device's old file to the new name on first boot after the rename, then deletes the old one.
 - `layout_config.json` — `{"char_per_row": -1, "layouts": [{"name": "Clock", "template": "{hours:02}{minutes:02}", "align": "left"}], "active_layout": "Clock"}` — `char_per_row`: modules per physical row (`-1` = single row spanning every detected module); `layouts`: the named template catalog (always ≥1 entry; `align` is `left`/`center`/`right`, and a missing or unrecognized value means `left`); `active_layout`: which one is currently live (always names an entry in `layouts`)
 
@@ -100,7 +104,6 @@ Constants in `main.py`:
 - `BASE_ADDR = 0x11` — First I2C device address (0x10 is reserved for pairing mode). Modules are wired right-to-left, so `BASE_ADDR` is the rightmost character and address increases leftward.
 - `AP_SSID = "OpenFlap-Setup"`, `AP_PASSWORD = "openflap1"` — AP mode credentials
 - `MDNS_HOSTNAME = "openflaps"` — device is reachable at `http://openflaps.local/` once on WiFi
-- `LAT = 0.0`, `LON = 0.0` — Location for weather API (open-meteo)
 - NTP re-syncs every 3600 seconds
 
 ## mDNS

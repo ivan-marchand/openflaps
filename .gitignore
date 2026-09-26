@@ -10,6 +10,7 @@ __pycache__/
 firmware/pico/wifi_config.json
 firmware/pico/api_config.json
 firmware/pico/timezone_config.json
+firmware/pico/location_config.json
 firmware/pico/max_concurrent_modules_config.json
 firmware/pico/layout_config.json
 
