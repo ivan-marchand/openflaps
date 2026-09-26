@@ -16,6 +16,9 @@ export function SetupPage() {
   const [apiKey, setApiKey] = useState('')
   const [zones, setZones] = useState([])
   const [selectedZone, setSelectedZone] = useState('')
+  const [lat, setLat] = useState('')
+  const [lon, setLon] = useState('')
+  const [locationSource, setLocationSource] = useState(null)
   const [maxConcurrent, setMaxConcurrent] = useState('')
   const [charPerRow, setCharPerRow] = useState('')
   const [moduleCount, setModuleCount] = useState(null)
@@ -29,6 +32,11 @@ export function SetupPage() {
     api.getTimezone().then(data => {
       setZones(data.zones || [])
       setSelectedZone(data.current || '')
+    }).catch(() => {})
+    api.getLocation().then(data => {
+      setLat(data.lat != null ? String(data.lat) : '')
+      setLon(data.lon != null ? String(data.lon) : '')
+      setLocationSource(data.source || null)
     }).catch(() => {})
     api.getMaxConcurrentModules().then(data => {
       setMaxConcurrent(String(data.max_concurrent ?? ''))
@@ -71,6 +79,35 @@ export function SetupPage() {
     try {
       const r = await api.saveTimezone(selectedZone)
       setStatus(r.ok ? 'Timezone saved.' : r.error || 'Error.')
+    } finally { setBusy(false) }
+  }
+
+  async function saveLocation(e) {
+    e.preventDefault()
+    const latValue = parseFloat(lat)
+    const lonValue = parseFloat(lon)
+    if (Number.isNaN(latValue) || Number.isNaN(lonValue)) return
+    setBusy(true)
+    try {
+      const r = await api.saveLocation(latValue, lonValue)
+      setStatus(r.ok ? 'Location saved.' : r.error || 'Error.')
+      if (r.ok) setLocationSource('saved')
+    } finally { setBusy(false) }
+  }
+
+  async function detectLocation() {
+    setBusy(true)
+    try {
+      const r = await api.detectLocation()
+      if (r.ok) {
+        setLat(String(r.lat))
+        setLon(String(r.lon))
+        setStatus('Approximate location detected. Check it, then SAVE LOCATION to keep it.')
+      } else {
+        setStatus(r.error || 'Error.')
+      }
+    } catch {
+      setStatus('Could not detect location.')
     } finally { setBusy(false) }
   }
 
@@ -165,6 +202,40 @@ export function SetupPage() {
           <button class="btn" type="submit" disabled={busy || !selectedZone}>
             SAVE TIMEZONE
           </button>
+        </form>
+      </div>
+
+      <div class="display-card" style="margin-bottom:12px;">
+        <div class="field-label">Weather Location</div>
+        <form onSubmit={saveLocation}>
+          <input
+            type="number"
+            step="any"
+            min="-90"
+            max="90"
+            placeholder="Latitude"
+            value={lat}
+            onInput={e => setLat(e.target.value)}
+            style="margin-bottom:8px;"
+          />
+          <input
+            type="number"
+            step="any"
+            min="-180"
+            max="180"
+            placeholder="Longitude"
+            value={lon}
+            onInput={e => setLon(e.target.value)}
+            style="margin-bottom:8px;"
+          />
+          <div style="margin-bottom:10px;font-size:0.85em;opacity:0.7;">
+            Decimal degrees (e.g. 51.5074, -0.1278). DETECT looks up an approximate location from your internet connection's public IP address.
+            {locationSource === 'detected' && ' Currently using a detected location; save one to pin it.'}
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn" type="submit" disabled={busy || lat === '' || lon === ''}>SAVE LOCATION</button>
+            <button class="btn" type="button" onClick={detectLocation} disabled={busy}>DETECT</button>
+          </div>
         </form>
       </div>
 
