@@ -69,7 +69,7 @@
   letter-spacing: 0.05em;
 }
 
-input[type=text], input[type=password] {
+input[type=text], input[type=password], input[type=number], input[type=date], input[type=time] {
   flex: 1;
   min-width: 0; /* let flex rows shrink the input instead of overflowing the card */
   background: #111;
@@ -80,9 +80,10 @@ input[type=text], input[type=password] {
   font-size: 0.95rem;
   padding: 10px 12px;
   outline: none;
+  color-scheme: dark;
 }
 
-input[type=text]:focus, input[type=password]:focus,
+input[type=text]:focus, input[type=password]:focus, input[type=number]:focus, input[type=date]:focus, input[type=time]:focus,
 select:focus {
   border-color: #f0a500;
 }
@@ -211,3 +212,29 @@ select {
   align-items: center;
   flex-wrap: wrap;
 }
+
+.reminder-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-color: #f0a500;
+}
+
+.reminder-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid #333;
+}
+.reminder-item:last-child { border-bottom: none; }
+.reminder-item-text { min-width: 0; overflow-wrap: anywhere; }
+.reminder-item-meta { font-size: 0.8em; opacity: 0.7; margin-top: 2px; }
+
+.btn-on { background: #f0a500; color: #111; }
+
+.reminder-form > form > input { display: block; width: 100%; box-sizing: border-box; }
+
+.char-count { font-size: 0.85em; opacity: 0.7; }

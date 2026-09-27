@@ -30,6 +30,11 @@ EXPECTED_TOOL_NAMES = {
     "identify_module",
     "power_down_module",
     "update_module",
+    "list_reminders",
+    "create_reminder",
+    "update_reminder",
+    "delete_reminder",
+    "dismiss_reminder",
 }
 
 

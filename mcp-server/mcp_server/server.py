@@ -55,6 +55,11 @@ MANAGER_TOOLS = frozenset(
         "get_layout",
         "get_timezone",
         "get_layouts",
+        "list_reminders",
+        "create_reminder",
+        "update_reminder",
+        "delete_reminder",
+        "dismiss_reminder",
     }
 )
 
@@ -135,6 +140,40 @@ def _check_text_fits(pico: PicoClient, text: str) -> None:
         f"Text is {len(text)} characters but the display only has {module_count} "
         f"characters available ({layout_desc}); shorten it rather than relying on truncation."
     )
+
+
+WEEKDAY_NAMES = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def _weekday_numbers(weekdays: list[str] | None) -> list[int] | None:
+    """["Mon", "wednesday"] -> [0, 2] (the Pico's 0 = Monday numbering)."""
+    if weekdays is None:
+        return None
+    numbers = []
+    for name in weekdays:
+        key = name.strip().lower()[:3]
+        if key not in WEEKDAY_NAMES:
+            raise ToolError(f"Unknown weekday {name!r}; use mon, tue, wed, thu, fri, sat or sun.")
+        numbers.append(WEEKDAY_NAMES.index(key))
+    return numbers
+
+
+def _reminder_body(
+    text: str,
+    time: str,
+    repeat: str,
+    date: str | None,
+    weekdays: list[str] | None,
+    duration_minutes: int | None,
+    expires: str | None,
+) -> dict:
+    body: dict = {"text": text, "time": time, "repeat": repeat, "duration": duration_minutes, "expires": expires}
+    if date is not None:
+        body["start_date"] = date
+    numbers = _weekday_numbers(weekdays)
+    if numbers is not None:
+        body["weekdays"] = numbers
+    return body
 
 
 def build_server(
@@ -298,6 +337,78 @@ def build_server(
     def update_module(address: int, new_address: int, speed: int, offset: int) -> dict:
         """Update a module's I2C address, speed, and offset calibration."""
         return _translate_errors(pico.update_module, address, new_address, speed, offset)
+
+    @mcp.tool()
+    def list_reminders() -> dict:
+        """List scheduled reminders with their next fire time ("next", device-local
+        YYYY-MM-DD HH:MM) and whether each is on the display right now ("active")."""
+        return _translate_errors(pico.get_reminders)
+
+    @mcp.tool()
+    def create_reminder(
+        text: str,
+        time: str,
+        repeat: str = "once",
+        date: str | None = None,
+        weekdays: list[str] | None = None,
+        duration_minutes: int | None = None,
+        expires: str | None = None,
+    ) -> dict:
+        """Schedule a reminder that takes over the display at a set time, then
+        restores whatever was showing before.
+
+        All times are the DEVICE's local time (see get_timezone), not UTC.
+        - text: what to show; same character set and length limit as set_text.
+        - time: "HH:MM", 24-hour.
+        - repeat: "once" | "daily" | "weekly" | "monthly" | "yearly".
+        - date: "YYYY-MM-DD", default today. For once it is THE date; for
+          daily/weekly the first allowed date; for monthly its day-of-month is
+          the anchor (months without that day are skipped); for yearly its
+          month and day are the anchor (Feb 29 only fires in leap years).
+        - weekdays: required for weekly, e.g. ["mon", "wed", "fri"].
+        - duration_minutes: 1-1440. Omit to keep it up until dismissed, the
+          next occurrence, or expiry, whichever comes first.
+        - expires: optional "YYYY-MM-DD HH:MM"; after it the reminder never
+          fires again and is deleted.
+        Set the time when it should appear, e.g. 09:30 for a 10:00
+        appointment you want 30 minutes' notice of."""
+        _check_text_supported(text)
+        body = _reminder_body(text, time, repeat, date, weekdays, duration_minutes, expires)
+        _check_text_fits(pico, text)
+        return _translate_errors(pico.create_reminder, body)
+
+    @mcp.tool()
+    def update_reminder(
+        reminder_id: str,
+        text: str,
+        time: str,
+        repeat: str = "once",
+        date: str | None = None,
+        weekdays: list[str] | None = None,
+        duration_minutes: int | None = None,
+        expires: str | None = None,
+    ) -> dict:
+        """Replace an existing reminder's whole schedule (same fields and rules as
+        create_reminder; reminder_id comes from list_reminders). Any field you
+        omit is reset to its default, so pass every field you want to keep.
+        Updating also clears a dismissal, so an edited reminder that is
+        currently in its window shows again."""
+        _check_text_supported(text)
+        body = _reminder_body(text, time, repeat, date, weekdays, duration_minutes, expires)
+        _check_text_fits(pico, text)
+        return _translate_errors(pico.update_reminder, reminder_id, body)
+
+    @mcp.tool()
+    def delete_reminder(reminder_id: str) -> dict:
+        """Delete a reminder (reminder_id from list_reminders)."""
+        return _translate_errors(pico.delete_reminder, reminder_id)
+
+    @mcp.tool()
+    def dismiss_reminder(reminder_id: str | None = None) -> dict:
+        """Take a reminder off the display now. Omit reminder_id to dismiss the one
+        currently showing. Only this occurrence is dismissed; a recurring
+        reminder still fires next time."""
+        return _translate_errors(pico.dismiss_reminder, reminder_id)
 
     mcp.custom_route("/login", methods=["GET"])(google_login.login)
     mcp.custom_route("/auth/google/callback", methods=["GET"])(google_login.callback)

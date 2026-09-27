@@ -32,6 +32,11 @@ TOOL_ARGS = {
     "save_layout": {"char_per_row": -1},
     "save_layouts": {"layouts": [{"name": "A", "template": "{hours}"}]},
     "update_module": {"address": 17, "new_address": 17, "speed": 1, "offset": 0},
+    "list_reminders": {},
+    "create_reminder": {"text": "HI", "time": "08:00"},
+    "update_reminder": {"reminder_id": "r1", "text": "HI", "time": "08:00"},
+    "delete_reminder": {"reminder_id": "r1"},
+    "dismiss_reminder": {},
 }
 
 

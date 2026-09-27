@@ -10,6 +10,7 @@ import ujson
 import uasyncio as asyncio
 import tz
 import layout
+import reminders
 
 
 # ----------------------------
@@ -22,6 +23,11 @@ LOCATION_CONFIG_FILE = "location_config.json"
 MAX_CONCURRENT_MODULES_CONFIG_FILE = "max_concurrent_modules_config.json"
 _LEGACY_ENERGY_CONFIG_FILE = "energy_config.json"  # pre-rename filename; migrated on first load, then removed
 LAYOUT_CONFIG_FILE = "layout_config.json"
+
+REMINDERS_CONFIG_FILE = "reminders_config.json"
+
+# Must match char_set in firmware/attiny84/split_flap_display_async/split_flap_controller.h.
+DISPLAY_CHARSET = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:-!?/\xb0"
 
 DEFAULT_MAX_CONCURRENT_MODULES = 4  # matches display width -> no limiting by default
 DEFAULT_CHAR_PER_ROW = -1  # -1 = single row (all modules in one line)
@@ -256,6 +262,32 @@ def save_active_layout(name):
         return True
     except Exception as e:
         print("Failed to save layout config:", e)
+        return False
+
+def load_reminders():
+    """(reminders, next_id). An entry that doesn't parse is dropped (and
+    logged) rather than crashing every tick's evaluation -- reminders.sanitize()
+    accepts any shape (including a valid-JSON-but-wrong-shape file) and never
+    raises, so a malformed reminders_config.json can't block boot / OTA recovery."""
+    try:
+        with open(REMINDERS_CONFIG_FILE, "r") as f:
+            data = ujson.load(f)
+    except:
+        data = None
+    kept, next_id = reminders.sanitize(data)
+    raw = data.get("reminders") if isinstance(data, dict) else None
+    if isinstance(raw, list) and len(raw) != len(kept):
+        print("Dropped {} malformed reminder(s)".format(len(raw) - len(kept)))
+    return kept, next_id
+
+def save_reminders():
+    """Persist current_reminders. Caller must hold mutation_lock."""
+    try:
+        with open(REMINDERS_CONFIG_FILE, "w") as f:
+            ujson.dump({"reminders": current_reminders, "next_id": reminder_next_id}, f)
+        return True
+    except Exception as e:
+        print("Failed to save reminders:", e)
         return False
 
 def _entry_align(entry):
@@ -897,7 +929,7 @@ async def call_claude(prompt):
         count = len(get_module_addresses())
     if not api_key:
         print("No Claude API key configured")
-        return ("ERR" + " " * count)[:count]
+        return ("ERR" + " " * count)[:count], False
 
     host = "api.anthropic.com"
     payload = ujson.dumps({
@@ -942,14 +974,13 @@ async def call_claude(prompt):
 
         if "content" in data and data["content"]:
             text = data["content"][0]["text"].upper()
-            allowed = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:-!?/\xb0"
-            text = "".join(c for c in text if c in allowed)
-            return (text + " " * count)[:count]
+            text = "".join(c for c in text if c in DISPLAY_CHARSET)
+            return (text + " " * count)[:count], True
         print("Claude error:", data)
-        return ("ERR" + " " * count)[:count]
+        return ("ERR" + " " * count)[:count], False
     except Exception as e:
         print("Claude API error:", e)
-        return ("ERR" + " " * count)[:count]
+        return ("ERR" + " " * count)[:count], False
 
 # ----------------------------
 # WiFi + NTP
@@ -1006,6 +1037,7 @@ def sync_time():
 # ----------------------------
 MODE_LAYOUT = "layout"
 MODE_TEXT = "text"
+MODE_REMINDER = "reminder"
 
 mode = MODE_LAYOUT
 last_text = ""
@@ -1019,6 +1051,20 @@ active_layout_name = DEFAULT_ACTIVE_LAYOUT
 layout_tokens_cache = {}
 layout_required_width_cache = {}
 layout_align_cache = {}
+
+# Reminders -- see reminders.py and
+# docs/superpowers/specs/2026-09-26-reminders-design.md. Evaluated
+# statelessly by evaluate_reminders() from tick() whenever the minute changes:
+# reminder times, durations and expiries are all whole minutes, so every
+# start/end falls on a minute boundary and finer checks would find nothing new.
+current_reminders = []
+reminder_next_id = 1
+shown_reminder_id = None      # reminder on the display while mode == MODE_REMINDER
+pre_reminder = None           # (mode, last_text) restored once no reminder is active
+reminders_dirty = False       # a reminder changed: evaluate on the next tick, not next second
+reminders_need_save = False   # in-memory dismissals not yet written to flash
+last_reminder_eval_minute = None  # time.time() // 60 of the last evaluation
+time_synced = False           # reminders wait for the first successful NTP sync
 
 async def render_active_layout():
     global last_text, minutes, last_weather_update, last_weather
@@ -1034,6 +1080,13 @@ async def render_active_layout():
             weather = fetched
     text, keep_energized = layout.render(tokens, lt, weather)
     async with mutation_lock:
+        # A reminder (or other mode switch) may have taken over while the
+        # weather await above was in flight -- don't overwrite it with a
+        # stale layout render. Every call site sets or checks mode ==
+        # MODE_LAYOUT before calling render_active_layout() (see CLAUDE.md),
+        # so this only ever bails out a call that's now stale.
+        if mode != MODE_LAYOUT:
+            return
         # Alignment needs the real module count, and that's an I2C read, so
         # it happens under the lock. last_text is set to the aligned text
         # (before the slow dispatch) so the UI preview matches the display.
@@ -1043,6 +1096,71 @@ async def render_active_layout():
         )
         last_text = text
         await print_string(text, keep_energized=keep_energized)
+
+def reminder_now():
+    """Local epoch seconds (reminders.py's time base) for the configured timezone."""
+    lt = time.localtime(time.time() + tz.get_offset(current_timezone))
+    return reminders.to_ts(lt[0], lt[1], lt[2], lt[3], lt[4], lt[5])
+
+def _reminder_index(rid):
+    for i, r in enumerate(current_reminders):
+        if r["id"] == rid:
+            return i
+    return None
+
+def dismiss_showing_reminders():
+    """An explicit display action (text, layout, Claude) replaces a showing
+    reminder: dismiss every active occurrence, so a fallback reminder doesn't
+    immediately cover what the user just set. In-memory and synchronous, so
+    the caller switches mode before its next await; evaluate_reminders()
+    persists it."""
+    global pre_reminder, shown_reminder_id, reminders_need_save
+    if mode != MODE_REMINDER:
+        return
+    now = reminder_now()
+    for r in current_reminders:
+        if reminders.is_active(r, now):
+            r["dismissed"] = reminders.latest_occurrence(r, now)
+            reminders_need_save = True
+    pre_reminder = None
+    shown_reminder_id = None
+
+async def evaluate_reminders():
+    global current_reminders, reminders_need_save, mode, last_text, minutes, status_line
+    global shown_reminder_id, pre_reminder
+    now = reminder_now()
+    if reminders_need_save or any(reminders.finished(r, now) for r in current_reminders):
+        async with mutation_lock:
+            current_reminders = [r for r in current_reminders if not reminders.finished(r, now)]
+            reminders_need_save = False
+            save_reminders()
+
+    r = reminders.active(current_reminders, now)
+    if r is not None:
+        if mode != MODE_REMINDER:
+            pre_reminder = (mode, last_text)
+        elif r["id"] == shown_reminder_id and r["text"] == last_text:
+            return
+        mode = MODE_REMINDER
+        shown_reminder_id = r["id"]
+        last_text = r["text"]
+        status_line = "Reminder: {}".format(last_text)
+        async with mutation_lock:
+            await print_string(last_text)
+    elif mode == MODE_REMINDER:
+        prev_mode, prev_text = pre_reminder or (MODE_LAYOUT, "")
+        pre_reminder = None
+        shown_reminder_id = None
+        if prev_mode == MODE_TEXT and prev_text:
+            mode = MODE_TEXT
+            last_text = prev_text
+            status_line = "Displayed: {}".format(last_text)
+            async with mutation_lock:
+                await print_string(last_text)
+        else:
+            mode = MODE_LAYOUT
+            minutes = None  # tick()'s layout branch re-renders right after this
+            status_line = "Switched to {}".format(active_layout_name)
 
 # Onboard LED status tracking (see update_led()): i2c_ok is re-checked
 # periodically in the background since modules can be plugged in/out or
@@ -1096,6 +1214,7 @@ cached_module_count = len(known_module_addresses)
 
 wlan, ip = connect_wifi()
 _synced = sync_time()
+time_synced = _synced
 next_ntp_sync = time.time() + (NTP_SYNC_INTERVAL if _synced else NTP_RETRY_INTERVAL)
 current_timezone = load_timezone()
 current_location = load_location()
@@ -1105,6 +1224,7 @@ max_concurrent_modules = load_max_concurrent()
 char_per_row = load_char_per_row()
 current_layouts, active_layout_name = load_layouts()
 _rebuild_layout_cache()
+current_reminders, reminder_next_id = load_reminders()
 
 # server = start_server() removed -- asyncio.start_server() replaces this, called from main()
 
@@ -1113,7 +1233,7 @@ _rebuild_layout_cache()
 # ----------------------------
 # POST /api/firmware/update -- see CLAUDE.md for the zip build recipe and format notes.
 FIRMWARE_UPDATE_TMP = "firmware_update.zip"
-FIRMWARE_UPDATE_MAX_BYTES = 150 * 1024  # margin over current firmware size
+FIRMWARE_UPDATE_MAX_BYTES = 256 * 1024  # margin over current firmware size (~165 KB stored)
 
 FIRMWARE_MANIFEST_ENTRY = "manifest.json"          # required entry inside the uploaded zip
 FIRMWARE_MANIFEST_FILE = "firmware_manifest.json"  # on-device record of what's currently installed
@@ -1391,6 +1511,7 @@ async def handle_firmware_update(conn, header_bytes, body_prefix):
 # ----------------------------
 async def handle_request(conn):
     global mode, last_text, status_line, current_timezone, minutes, last_weather_update, detected_location
+    global current_reminders, reminder_next_id, reminders_dirty, reminders_need_save
     try:
         header_bytes, body_prefix = await async_read_http_headers(conn)
         if not header_bytes:
@@ -1440,12 +1561,14 @@ async def handle_request(conn):
                 "module_count": cached_module_count,
                 "char_per_row": char_per_row,
                 "active_layout": active_layout_name,
+                "reminder": {"id": shown_reminder_id, "text": last_text} if mode == MODE_REMINDER else None,
             })
 
         elif route == "/api/text" and method == "POST":
             data = parse_json_body(req)
             t = (data.get("text", "") or "").upper()
             if t:
+                dismiss_showing_reminders()
                 last_text = t
                 mode = MODE_TEXT
                 async with mutation_lock:
@@ -1466,6 +1589,7 @@ async def handle_request(conn):
                             await async_http_send_json(conn, {"ok": False, "error": "Unknown layout."}, code="400 Bad Request")
                             return
                         save_active_layout(requested)
+                dismiss_showing_reminders()
                 mode = MODE_LAYOUT
                 last_weather_update = 0
                 await render_active_layout()
@@ -1485,7 +1609,12 @@ async def handle_request(conn):
             prompt = data.get("prompt", "").strip()
             if prompt:
                 status_line = "Asking Claude..."
-                result = await call_claude(prompt)
+                result, ok = await call_claude(prompt)
+                if not ok and mode == MODE_REMINDER:
+                    status_line = "Claude request failed; reminder kept"
+                    await async_http_send_json(conn, {"ok": False, "error": "Claude request failed."}, code="502 Bad Gateway")
+                    return
+                dismiss_showing_reminders()  # a successful call (or a failure outside reminder mode) replaces the showing reminder
                 last_text = result
                 mode = MODE_TEXT
                 async with mutation_lock:
@@ -1494,6 +1623,98 @@ async def handle_request(conn):
                 await async_http_send_json(conn, {"ok": True, "status": status_line})
             else:
                 await async_http_send_json(conn, {"ok": False, "error": "No prompt provided."}, code="400 Bad Request")
+
+        elif route == "/api/reminders" and method == "GET":
+            # Memory only, no lock -- like /api/state.
+            now = reminder_now()
+            out = []
+            for r in current_reminders:
+                entry = {k: v for k, v in r.items() if k != "dismissed"}
+                nxt = reminders.next_occurrence(r, now)
+                entry["next"] = reminders.format_local(nxt) if nxt is not None else None
+                entry["active"] = reminders.is_active(r, now)
+                out.append(entry)
+            await async_http_send_json(conn, {
+                "reminders": out,
+                "max": reminders.MAX_REMINDERS,
+                "timezone": current_timezone,
+            })
+
+        elif route == "/api/reminders" and method == "POST":
+            r, err = reminders.validate(parse_json_body(req), reminder_now(), cached_module_count, DISPLAY_CHARSET)
+            if r is not None:
+                async with mutation_lock:
+                    if len(current_reminders) >= reminders.MAX_REMINDERS:
+                        err = "At most {} reminders.".format(reminders.MAX_REMINDERS)
+                    else:
+                        r["id"] = "r{}".format(reminder_next_id)
+                        r["dismissed"] = None
+                        reminder_next_id += 1
+                        current_reminders.append(r)
+                        save_reminders()
+            if err:
+                await async_http_send_json(conn, {"ok": False, "error": err}, code="400 Bad Request")
+            else:
+                reminders_dirty = True
+                await async_http_send_json(conn, {"ok": True, "reminder": r})
+
+        elif route == "/api/reminders/update" and method == "POST":
+            data = parse_json_body(req)
+            rid = data.get("id")
+            if _reminder_index(rid) is None:
+                await async_http_send_json(conn, {"ok": False, "error": "Unknown reminder."}, code="404 Not Found")
+                return
+            r, err = reminders.validate(data, reminder_now(), cached_module_count, DISPLAY_CHARSET)
+            if err:
+                await async_http_send_json(conn, {"ok": False, "error": err}, code="400 Bad Request")
+                return
+            r["id"] = rid
+            r["dismissed"] = None  # an edited reminder is a fresh schedule
+            async with mutation_lock:
+                idx = _reminder_index(rid)
+                if idx is not None:
+                    current_reminders[idx] = r
+                    save_reminders()
+            if idx is None:
+                await async_http_send_json(conn, {"ok": False, "error": "Unknown reminder."}, code="404 Not Found")
+                return
+            reminders_dirty = True
+            await async_http_send_json(conn, {"ok": True, "reminder": r})
+
+        elif route == "/api/reminders/delete" and method == "POST":
+            rid = parse_json_body(req).get("id")
+            async with mutation_lock:
+                idx = _reminder_index(rid)
+                if idx is not None:
+                    current_reminders.pop(idx)
+                    save_reminders()
+            if idx is None:
+                await async_http_send_json(conn, {"ok": False, "error": "Unknown reminder."}, code="404 Not Found")
+                return
+            reminders_dirty = True
+            await async_http_send_json(conn, {"ok": True})
+
+        elif route == "/api/reminders/dismiss" and method == "POST":
+            rid = parse_json_body(req).get("id")
+            if rid is None:
+                rid = shown_reminder_id if mode == MODE_REMINDER else None
+                if rid is None:
+                    await async_http_send_json(conn, {"ok": False, "error": "No reminder is showing."}, code="400 Bad Request")
+                    return
+            idx = _reminder_index(rid)
+            if idx is None:
+                await async_http_send_json(conn, {"ok": False, "error": "Unknown reminder."}, code="404 Not Found")
+                return
+            now = reminder_now()
+            r = current_reminders[idx]
+            if not reminders.is_active(r, now):
+                await async_http_send_json(conn, {"ok": False, "error": "That reminder isn't active."}, code="400 Bad Request")
+                return
+            r["dismissed"] = reminders.latest_occurrence(r, now)
+            reminders_need_save = True
+            reminders_dirty = True
+            status_line = "Reminder dismissed"
+            await async_http_send_json(conn, {"ok": True, "status": status_line})
 
         elif route == "/api/setup/wifi" and method == "POST":
             import machine  # inline: only needed on the reboot path, not at normal boot
@@ -1807,8 +2028,17 @@ async def update_led():
 
 
 async def tick():
-    global next_ntp_sync, redisplay_pending
+    global next_ntp_sync, redisplay_pending, time_synced, reminders_dirty, last_reminder_eval_minute
     now = time.time()
+    # Before the layout branch, so a reminder that just ended hands back to
+    # the layout (minutes = None) and it re-renders on this same tick.
+    if time_synced and (reminders_dirty or now // 60 != last_reminder_eval_minute):
+        reminders_dirty = False
+        last_reminder_eval_minute = now // 60
+        try:
+            await evaluate_reminders()
+        except Exception as e:
+            print("Reminder evaluation error:", e)
     redisplay = redisplay_pending
     redisplay_pending = False
 
@@ -1828,6 +2058,8 @@ async def tick():
     # Periodic NTP re-sync
     if now >= next_ntp_sync:
         _synced = sync_time()
+        if _synced:
+            time_synced = True
         next_ntp_sync = time.time() + (NTP_SYNC_INTERVAL if _synced else NTP_RETRY_INTERVAL)
 
 

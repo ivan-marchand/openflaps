@@ -138,3 +138,19 @@ class PicoClient:
 
     def power_down_module(self, address: int) -> Any:
         return self._post("/api/modules/power_down", {"address": address})
+
+    # Reminders
+    def get_reminders(self) -> Any:
+        return self._get("/api/reminders")
+
+    def create_reminder(self, reminder: dict[str, Any]) -> Any:
+        return self._post("/api/reminders", reminder)
+
+    def update_reminder(self, reminder_id: str, reminder: dict[str, Any]) -> Any:
+        return self._post("/api/reminders/update", {"id": reminder_id, **reminder})
+
+    def delete_reminder(self, reminder_id: str) -> Any:
+        return self._post("/api/reminders/delete", {"id": reminder_id})
+
+    def dismiss_reminder(self, reminder_id: str | None = None) -> Any:
+        return self._post("/api/reminders/dismiss", {} if reminder_id is None else {"id": reminder_id})

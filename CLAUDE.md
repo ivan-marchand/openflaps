@@ -51,6 +51,7 @@ already in `firmware/pico/` — so run `npm run build` first or the device gets 
 - `/#/` — ControlPage (set text, change mode)
 - `/#/setup` — SetupPage (timezone, weather location, Claude API key, WiFi)
 - `/#/modules` — ModulesPage (calibrate I2C modules)
+- `/#/reminders` — RemindersPage (schedule reminders)
 
 **Frontend API client** (`frontend/src/api.js`):
 
@@ -79,11 +80,17 @@ already in `firmware/pico/` — so run `npm run build` first or the device gets 
 | `api.saveLayout(charPerRow)` | `POST /api/setup/layout` |
 | `api.getLayouts()` | `GET /api/layouts` |
 | `api.saveLayouts(layouts, activeLayout)` | `POST /api/layouts` |
+| `api.getReminders()` | `GET /api/reminders` |
+| `api.createReminder(r)` | `POST /api/reminders` |
+| `api.updateReminder(id, r)` | `POST /api/reminders/update` |
+| `api.deleteReminder(id)` | `POST /api/reminders/delete` |
+| `api.dismissReminder(id?)` | `POST /api/reminders/dismiss` |
 
 ## Key Files
 
 - `firmware/pico/main.py` — Main Pico controller (HTTP server, I2C master, display logic)
 - `firmware/pico/layout.py` — Layout template engine: field registry, `parse_template()`, `render()`, `required_width()`, `uses_weather()` (see Display Modes below)
+- `firmware/pico/reminders.py` — Pure reminder scheduling (calendar maths on local epoch seconds, `latest_occurrence()`, `next_occurrence()`, `active()`, `finished()`, `validate()`); host-tested in `firmware/pico/test/`
 - `firmware/pico/tz.py` — Timezone table with DST rules (~35 zones), `get_offset()`, `zone_list()`
 - `firmware/pico/deploy.sh` — Deploys all firmware files to Pico via `mpremote` (USB) or `POST /api/firmware/update` (`--ota [host]`)
 - `firmware/pico/index.html` — Built Preact SPA (served to browser)
@@ -99,6 +106,7 @@ Config is stored in JSON files on Pico flash — all are gitignored:
 - `location_config.json` — `{"lat": 51.5074, "lon": -0.1278}` — weather location in decimal degrees (lat in [-90, 90], lon in [-180, 180]), set via SetupPage's "Weather Location" card (`POST /api/setup/location`). Deliberately not hardcoded in the repo. When absent, `get_weather()` falls back to an approximate location from the public IP (`detect_location()`, ip-api.com's free plain-HTTP endpoint), looked up once per boot and kept in memory only (`detected_location`, never saved; retried on the next weather refresh if it fails — weather fields show dashes meanwhile). `GET /api/location` returns the effective `lat`/`lon` plus `source` (`"saved"`, `"detected"` or `null`). The card's DETECT button calls `POST /api/location/detect`, which returns a fresh lookup without saving it, so the user reviews it before pressing Save. Saving a new location resets `last_weather_update` so the next tick refetches.
 - `max_concurrent_modules_config.json` — `{"max_concurrent": 4}` — max modules allowed to move simultaneously. Renamed from `energy_config.json`; `load_max_concurrent()` migrates an existing device's old file to the new name on first boot after the rename, then deletes the old one.
 - `layout_config.json` — `{"char_per_row": -1, "layouts": [{"name": "Clock", "template": "{hours:02}{minutes:02}", "align": "left"}], "active_layout": "Clock"}` — `char_per_row`: modules per physical row (`-1` = single row spanning every detected module); `layouts`: the named template catalog (always ≥1 entry; `align` is `left`/`center`/`right`, and a missing or unrecognized value means `left`); `active_layout`: which one is currently live (always names an entry in `layouts`)
+- `reminders_config.json` — `{"reminders": [{"id": "r3", "text": "DR APPT 10AM", "repeat": "once", "start_date": "2026-09-30", "time": "09:30", "duration": 45, "expires": null, "dismissed": null}], "next_id": 4}` — scheduled reminders (max 20). `repeat` is `once`/`daily`/`weekly` (+ `weekdays`, 0 = Mon)/`monthly`/`yearly`; times are device-local; `duration` minutes or `null` (until dismissed / next occurrence / expiry); `expires` `YYYY-MM-DD HH:MM` or `null`; `dismissed` is Pico-internal (the dismissed occurrence's start). Finished reminders (expired, or a `once` that ended/was dismissed) are deleted automatically.
 
 Constants in `main.py`:
 - `BASE_ADDR = 0x11` — First I2C device address (0x10 is reserved for pairing mode). Modules are wired right-to-left, so `BASE_ADDR` is the rightmost character and address increases leftward.
@@ -158,6 +166,7 @@ Full rationale: `docs/superpowers/specs/2026-09-17-pico-async-concurrency-design
 |---|---|---|
 | `MODE_LAYOUT` | `"layout"` | Renders the active named layout's template, auto-updating (time/date fields every minute, weather on `WEATHER_UPDATE_INTERVAL`) |
 | `MODE_TEXT` | `"text"` | Shows user text or Claude response, static |
+| `MODE_REMINDER` | `"reminder"` | A scheduled reminder is showing (set by `evaluate_reminders()`); restores the previous mode/text when it ends |
 
 `MODE_LAYOUT` replaced the old fixed `MODE_TIME`/`MODE_TEMP` modes with a
 user-configurable template system. A **layout** is a `{name, template}`
@@ -245,6 +254,8 @@ field padded with `{field:N}` already fills its width with spaces. Only layouts
 are aligned; text set by the user, Claude responses and other static text stay
 left-aligned.
 
+**Reminders.** `tick()` calls `evaluate_reminders()` once per minute, when the minute changes (immediately when `reminders_dirty`) — reminder times, durations and expiries are whole minutes, so every start/end lands on a minute boundary — only after the first successful NTP sync. It is stateless: `reminders.active()` picks the active reminder whose occurrence started most recently, so overlapping reminders fall back naturally. Entering `MODE_REMINDER` snapshots `(mode, last_text)` into `pre_reminder`; when nothing is active any more the snapshot is restored (text re-dispatched, or `minutes = None` so the layout re-renders). `POST /api/text`, `/api/mode` and `/api/claude` call `dismiss_showing_reminders()` first, which dismisses every active occurrence so the user's explicit action wins. Reminder text is static and left-aligned, like `MODE_TEXT`. All reminder times use `reminders.to_ts()` on `time.localtime()` fields rather than `time.mktime()`, whose epoch differs between MicroPython and CPython. When a Claude request fails while a reminder is showing, `POST /api/claude` leaves the reminder up and returns 502 instead of dismissing it. A reminder that fires while a Claude request is in flight is dismissed once the request succeeds and the response arrives (the explicit action wins).
+
 Display width is auto-detected: `get_module_addresses()` walks `i2c.scan()` results from `BASE_ADDR` upward to find the contiguous module count (also returned as `module_count` by `GET /api/state` / `GET /api/layout`, and used to size the frontend's text input and Claude's target length — nothing is hardcoded to 4 characters anymore). `print_string(s)` left-aligns/hard-wraps `s` to that count, then reverses each row before assigning to addresses in increasing order, since modules are wired right-to-left within a row (`BASE_ADDR` is the rightmost character of the first row). Modules are dispatched leftmost (highest address) first, like natural left-to-right writing.
 
 `char_per_row` (see `layout_config.json` above) splits the auto-detected modules into physical rows of that many characters each (last row may be shorter); `-1` (default) keeps everything on one row. Text wraps onto the next row every `char_per_row` characters — a hard wrap, no word-breaking. Rows stay in address order (row 0 = lowest addresses); each row is independently reversed for its own right-to-left wiring. The frontend's `SplitFlapDisplay` mirrors this exact wrapping so the on-screen preview matches the physical layout.
@@ -304,9 +315,9 @@ cd firmware/pico
 ```
 
 - **USB** finds the Pico on `/dev/cu.usbmodem*` (macOS) or `/dev/ttyACM*` (Linux), uploads
-  `main.py`, `tz.py`, `layout.py`, `index.html`, `favicon.svg`, `setup.html`, `assets/index.js`,
+  `main.py`, `tz.py`, `layout.py`, `reminders.py`, `index.html`, `favicon.svg`, `setup.html`, `assets/index.js`,
   `assets/index.css` via `mpremote`, then reboots. Requires `mpremote` (`pip install mpremote`).
-- **`--ota [host]`** (host defaults to `openflaps.local` via mDNS) zips those same eight
+- **`--ota [host]`** (host defaults to `openflaps.local` via mDNS) zips those same nine
   files (from `firmware/pico/`, so entry names match what the device expects) plus a
   generated `manifest.json` listing them, and POSTs the zip
   to `http://<host>/api/firmware/update` with `curl`; the Pico streams it straight to flash,
@@ -316,8 +327,8 @@ cd firmware/pico
 
   ```bash
   cd firmware/pico
-  echo '["main.py","tz.py","layout.py","index.html","favicon.svg","setup.html","assets/index.js","assets/index.css"]' > manifest.json
-  zip -0 -r update.zip main.py tz.py layout.py index.html favicon.svg setup.html assets/index.js assets/index.css manifest.json
+  echo '["main.py","tz.py","layout.py","reminders.py","index.html","favicon.svg","setup.html","assets/index.js","assets/index.css"]' > manifest.json
+  zip -0 -r update.zip main.py tz.py layout.py reminders.py index.html favicon.svg setup.html assets/index.js assets/index.css manifest.json
   rm manifest.json
   curl -X POST -H "Content-Type: application/zip" --data-binary @update.zip http://<host>/api/firmware/update
   ```
@@ -351,7 +362,7 @@ cd firmware/pico
   depending on uptime/fragmentation in testing), even with every other
   buffer in the unpack path already minimized. Stored entries skip
   `deflate.DeflateIO` entirely, so there's no large allocation at all —
-  worth the bigger upload (this file set is ~90 KB stored vs. ~29 KB
+  worth the bigger upload (this file set is ~165 KB stored vs. ~48 KB
   deflated, still well under `FIRMWARE_UPDATE_MAX_BYTES`) for updates that
   work deterministically instead of only when the heap happens to be
   unfragmented enough. `deflate` decoding is still fully supported server-side
@@ -384,7 +395,7 @@ cd firmware/pico
   `gc.collect()` runs after each extracted file to reclaim its buffers before
   the next one. The Pico W's free heap is too tight (~264 KB SRAM total,
   shared with the WiFi stack, HTTP server, etc.) to buffer whole large files.
-- Capped at `FIRMWARE_UPDATE_MAX_BYTES` (150 KB); not atomic across files —
+- Capped at `FIRMWARE_UPDATE_MAX_BYTES` (256 KB); not atomic across files —
   if a later entry in the zip fails, files already unpacked from earlier
   entries stay updated. Re-uploading a known-good zip is the recovery path.
 - The SetupPage "Firmware Update" card wraps this with a file picker.
@@ -413,6 +424,7 @@ All three are gitignored.
 
 ## Testing & Simulation
 
+- **Pico host unit tests:** `cd firmware/pico && python3 -m unittest discover -s test` — covers the pure `reminders.py` module (CPython, no MicroPython needed).
 - **ATtiny84 host unit tests:** `cd firmware/attiny84/test-host && python3 -m platformio test -e native`
   (characterization tests + 1 toolchain-harness check, PlatformIO `native`
   env + ArduinoFake + Unity). Covers the extracted headers

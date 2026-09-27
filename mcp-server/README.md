@@ -17,6 +17,13 @@ drive the display but cannot change device configuration. See
 [DEPLOY.md](DEPLOY.md) for the Google Cloud setup and
 [the design](../docs/superpowers/specs/2026-09-20-mcp-google-sso-design.md).
 
+## Reminders
+
+`list_reminders`, `create_reminder`, `update_reminder`, `delete_reminder` and
+`dismiss_reminder` manage alarm-style reminders stored on the Pico (managers and
+admins). Times are the device's local time. See
+[the design](../docs/superpowers/specs/2026-09-26-reminders-design.md).
+
 ## Local development
 
 ```bash

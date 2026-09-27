@@ -33,6 +33,11 @@ export const api = {
     post('/api/modules', { address, new_address: newAddress, speed, offset }),
   identifyModule: (address) => post('/api/modules/identify', { address }),
   powerDownModule: (address) => post('/api/modules/power_down', { address }),
+  getReminders: () => fetch(BASE + '/api/reminders').then(r => r.json()),
+  createReminder: (reminder) => post('/api/reminders', reminder),
+  updateReminder: (id, reminder) => post('/api/reminders/update', { id, ...reminder }),
+  deleteReminder: (id) => post('/api/reminders/delete', { id }),
+  dismissReminder: (id) => post('/api/reminders/dismiss', id ? { id } : {}),
   updateFirmware: (zipFile) => fetch(BASE + '/api/firmware/update', {
     method: 'POST',
     headers: { 'Content-Type': 'application/zip' },
