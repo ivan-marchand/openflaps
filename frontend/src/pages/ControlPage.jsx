@@ -62,6 +62,15 @@ export function ControlPage() {
         <div class="status-line">{state.status}</div>
       </div>
 
+      {state.reminder && (
+        <div class="display-card reminder-banner">
+          <span>Reminder: <strong>{state.reminder.text}</strong></span>
+          <button class="btn" disabled={busy} onClick={() => withBusy(() => api.dismissReminder(state.reminder.id))}>
+            DISMISS
+          </button>
+        </div>
+      )}
+
       <div class="display-card">
         <div class="field-label">Text</div>
         <div class="input-row">
@@ -76,6 +85,9 @@ export function ControlPage() {
           <button class="btn" disabled={busy || !textInput} onClick={sendText}>
             SEND
           </button>
+        </div>
+        <div class="char-count" style="margin-top:-6px;">
+          {textInput.length} / {state.module_count} characters
         </div>
 
         <div class="field-label" style="margin-top:10px;">Ask Claude</div>
@@ -112,6 +124,7 @@ export function ControlPage() {
       <div style="display:flex; gap:8px; margin-top:8px;">
         <a class="setup-link" style="margin-top:0;" href="#/setup">⚙ SETUP</a>
         <a class="setup-link" style="margin-top:0;" href="#/modules">⊞ MODULES</a>
+        <a class="setup-link" style="margin-top:0;" href="#/reminders">◷ REMINDERS</a>
       </div>
     </div>
   )

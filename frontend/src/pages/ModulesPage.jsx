@@ -29,8 +29,11 @@ function ModuleRow({ module, onSaved, usedAddresses }) {
     setOffset(module.offset ?? '')
   }, [module.address, module.speed, module.offset])
 
+  // With the coils off the rotor isn't driven, so the missed-steps average is
+  // meaningless (the ATtiny reports 255) -- show N/A instead.
+  const missedNA = module.energized === false
   const missedColor =
-    module.missed_steps === null ? '#888' :
+    missedNA || module.missed_steps === null ? '#888' :
     module.missed_steps > 20 ? '#ff4444' :
     module.missed_steps > 5  ? '#f0a500' : '#888'
 
@@ -68,7 +71,7 @@ function ModuleRow({ module, onSaved, usedAddresses }) {
         <span class="module-addr">
           {isPairing ? <span style="color:#f0a500;">PAIR</span> : toHex(addr)}
         </span>
-        <span class="module-stat" style={{ color: missedColor }}>MISSED {module.missed_steps === null ? '—' : module.missed_steps}</span>
+        <span class="module-stat" style={{ color: missedColor }}>MISSED {missedNA ? 'N/A' : module.missed_steps === null ? '—' : module.missed_steps}</span>
         <span class="module-stat" style={{ color: module.energized === null ? '#888' : module.energized ? '#f0a500' : '#888' }}>
           {module.energized === null ? '—' : module.energized ? 'ON' : 'off'}
         </span>

@@ -173,7 +173,7 @@ void setup() {
   if (offset == 0xFF) offset = 0;
 
   uint8_t speed = EEPROM.read(EEPROM_SPEED);
-  if (speed == 0xFF) speed = 10;
+  if (speed == 0xFF) speed = 16;
 
   status_buffer[0] = speed;
   status_buffer[1] = offset;

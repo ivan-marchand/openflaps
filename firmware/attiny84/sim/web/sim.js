@@ -68,7 +68,7 @@ function syncTargetAddr(a) {
 function createModule() {
   if (handle) api.free(handle);
   const startedUnpaired = unpairedRequested();
-  handle = api.new(loadAddr(), 10, 0);   // speed 10 = the firmware's own default
+  handle = api.new(loadAddr(), 16, 0);   // speed 16 = the firmware's own default
   lastAddr = api.addr(handle);
   syncTargetAddr(lastAddr);
   log(startedUnpaired
