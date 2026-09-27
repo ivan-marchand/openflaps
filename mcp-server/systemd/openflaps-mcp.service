@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=openflap
+User=openflaps
 WorkingDirectory=/opt/openflaps/mcp-server
 EnvironmentFile=/opt/openflaps/mcp-server/.env
 ExecStart=/opt/openflaps/mcp-server/.venv/bin/python -m mcp_server

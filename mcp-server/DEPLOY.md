@@ -45,17 +45,17 @@ chmod 600 .env   # it holds the Google client secret
 
 ## 4. Install the systemd service
 
-The service runs as a dedicated `openflap` system account, so create it and
+The service runs as a dedicated `openflaps` system account, so create it and
 hand it ownership of `/opt/openflaps` (including `mcp-server/data/`, which the
 running service writes `tokens.json` and `users.json` into) before starting it:
 
 ```bash
-sudo useradd --system --no-create-home openflap
-sudo chown -R openflap:openflap /opt/openflaps
-sudo cp systemd/openflap-mcp.service /etc/systemd/system/
+sudo useradd --system --no-create-home openflaps
+sudo chown -R openflaps:openflaps /opt/openflaps
+sudo cp systemd/openflaps-mcp.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now openflap-mcp
-sudo systemctl status openflap-mcp   # confirm it's running
+sudo systemctl enable --now openflaps-mcp
+sudo systemctl status openflaps-mcp   # confirm it's running
 ```
 
 ## 5. Expose it with a Cloudflare Tunnel
@@ -63,13 +63,13 @@ sudo systemctl status openflap-mcp   # confirm it's running
 ```bash
 # Install cloudflared: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
 cloudflared tunnel login
-cloudflared tunnel create openflap-mcp
+cloudflared tunnel create openflaps-mcp
 ```
 
 Create `~/.cloudflared/config.yml`:
 
 ```yaml
-tunnel: openflap-mcp
+tunnel: openflaps-mcp
 credentials-file: /home/<user>/.cloudflared/<tunnel-id>.json
 ingress:
   - hostname: mcp.yourdomain.com
@@ -78,14 +78,14 @@ ingress:
 ```
 
 ```bash
-cloudflared tunnel route dns openflap-mcp mcp.yourdomain.com
+cloudflared tunnel route dns openflaps-mcp mcp.yourdomain.com
 sudo cloudflared service install
 sudo systemctl enable --now cloudflared
 ```
 
 Now make sure `.env`'s `MCP_PUBLIC_URL` is `https://mcp.yourdomain.com` and the
 Google redirect URI from step 2 matches, then
-`sudo systemctl restart openflap-mcp`.
+`sudo systemctl restart openflaps-mcp`.
 
 ## 6. Add the connector
 
@@ -93,7 +93,7 @@ Google redirect URI from step 2 matches, then
   URL `https://mcp.yourdomain.com/mcp`. You'll be sent to Google to sign in.
 - **Claude Code:**
   ```bash
-  claude mcp add --transport http openflap https://mcp.yourdomain.com/mcp
+  claude mcp add --transport http openflaps https://mcp.yourdomain.com/mcp
   ```
 
 Only the address in `MCP_ADMIN_EMAIL` can sign in until you invite others.
@@ -116,7 +116,7 @@ be tied to a Google account. Invite the exact address that person signs in
 with.
 
 If you ever lose admin access, edit `MCP_ADMIN_EMAIL` in `.env` (or
-`data/users.json`) on the Pi and `sudo systemctl restart openflap-mcp`.
+`data/users.json`) on the Pi and `sudo systemctl restart openflaps-mcp`.
 
 ## 8. Upgrading from the password login
 
@@ -141,7 +141,7 @@ tokens carry no Google identity, so every connector must be re-authorized once
 - [ ] The invited manager cannot open `/admin` (403) and gets "requires the
       admin role" from `save_api_key`.
 - [ ] Removing that manager on `/admin` makes their next tool call fail.
-- [ ] Restarting `openflap-mcp` (`sudo systemctl restart openflap-mcp`) does not
+- [ ] Restarting `openflaps-mcp` (`sudo systemctl restart openflaps-mcp`) does not
       require re-adding the connector (tokens in `data/tokens.json` survive), and
       the manager list in `data/users.json` is unchanged.
 
@@ -151,7 +151,7 @@ Sign-in is delegated to Google, so there is no password form to brute-force.
 Remaining recommendations:
 
 - Keep `.env` at mode `600` and `data/` at mode `700`, both owned by the
-  `openflap` user (the server writes `tokens.json` and `users.json` with mode
+  `openflaps` user (the server writes `tokens.json` and `users.json` with mode
   `600`).
 - Turn on 2-step verification for the admin Google account: it is the only
   credential that can invite managers and change device configuration.
