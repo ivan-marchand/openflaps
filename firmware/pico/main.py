@@ -584,8 +584,12 @@ def start_ap_provisioning():
     # check status any other way. print_string() no-ops harmlessly if no
     # modules answer on I2C. Left de-energized (default) since this may
     # sit for a while until someone notices and reconfigures.
+    async def show_ap_status():
+        async with mutation_lock:
+            await print_string("AP")
+
     try:
-        asyncio.run(print_string("AP"))
+        asyncio.run(show_ap_status())
     except Exception as e:
         print("Could not display AP status:", e)
 
@@ -1212,6 +1216,12 @@ last_i2c_check = time.time()
 known_module_addresses = set(get_module_addresses())
 cached_module_count = len(known_module_addresses)
 
+# Loaded before connect_wifi(): AP provisioning mode shows "AP" through
+# print_string(), which reads char_per_row and (via dispatch_throttled())
+# max_concurrent_modules, and never returns to this point (it resets).
+max_concurrent_modules = load_max_concurrent()
+char_per_row = load_char_per_row()
+
 wlan, ip = connect_wifi()
 _synced = sync_time()
 time_synced = _synced
@@ -1220,8 +1230,6 @@ current_timezone = load_timezone()
 current_location = load_location()
 detected_location = None  # set by get_weather() / POST /api/location/detect; never saved
 api_key = load_api_key()
-max_concurrent_modules = load_max_concurrent()
-char_per_row = load_char_per_row()
 current_layouts, active_layout_name = load_layouts()
 _rebuild_layout_cache()
 current_reminders, reminder_next_id = load_reminders()
