@@ -49,7 +49,9 @@ class FieldCatalogTest(unittest.TestCase):
             "available": True, "example": "2",
         })
         self.assertEqual((c["year"]["min_width"], c["year"]["max_width"]), (2, 4))
-        self.assertEqual((c["pressure_hpa"]["min_width"], c["pressure_hpa"]["max_width"]), (3, 4))
+        self.assertEqual((c["pressure_hpa"]["min_width"], c["pressure_hpa"]["max_width"]), (4, 4))
+        self.assertEqual((c["temperature_f"]["min_width"], c["temperature_f"]["max_width"]), (3, 3))
+        self.assertEqual((c["indoor_temp_f"]["min_width"], c["indoor_temp_f"]["max_width"]), (2, 3))
 
     def test_examples_render_live_values_at_natural_width(self):
         c = catalog_by_name(ALL, LT, WEATHER, SENSOR)
