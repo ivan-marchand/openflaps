@@ -315,7 +315,8 @@ def build_server(
         Available fields: month, month_name (JAN..DEC), day, year (width 2 or 4 only), hours,
         hours12, minutes, ampm, weekday, temperature_f, temperature_c, humidity,
         wind_mph, wind_kmh, wind_deg, wind_dir (compass, e.g. NNE), condition
-        (e.g. CLR, RAIN, SNOW, TSTM).
+        (e.g. CLR, RAIN, SNOW, TSTM), and indoor BME280 readings indoor_temp_f,
+        indoor_temp_c, indoor_humidity, pressure_hpa (hPa).
         Example: "{month:02}/{day:02}/{year:2} {temperature_f:3}°F".
         active_layout optionally selects which entry becomes active; if
         omitted, the current active layout is kept if still present,
