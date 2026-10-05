@@ -43,6 +43,7 @@ Requires `mpremote` (`pip install mpremote`).
    - `firmware/pico/tz.py`
    - `firmware/pico/layout.py`
    - `firmware/pico/reminders.py`
+   - `firmware/pico/bme280.py`
    - `firmware/pico/index.html`
    - `firmware/pico/setup.html`
    - `firmware/pico/assets/index.js`

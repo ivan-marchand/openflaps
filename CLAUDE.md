@@ -80,6 +80,7 @@ already in `firmware/pico/` — so run `npm run build` first or the device gets 
 | `api.saveLayout(charPerRow)` | `POST /api/setup/layout` |
 | `api.getLayouts()` | `GET /api/layouts` |
 | `api.saveLayouts(layouts, activeLayout)` | `POST /api/layouts` |
+| `api.getLayoutFields()` | `GET /api/layout_fields` |
 | `api.getReminders()` | `GET /api/reminders` |
 | `api.createReminder(r)` | `POST /api/reminders` |
 | `api.updateReminder(id, r)` | `POST /api/reminders/update` |
@@ -89,8 +90,9 @@ already in `firmware/pico/` — so run `npm run build` first or the device gets 
 ## Key Files
 
 - `firmware/pico/main.py` — Main Pico controller (HTTP server, I2C master, display logic)
-- `firmware/pico/layout.py` — Layout template engine: field registry, `parse_template()`, `render()`, `required_width()`, `uses_weather()` (see Display Modes below)
+- `firmware/pico/layout.py` — Layout template engine: field registry, `parse_template()`, `render()`, `required_width()`, `uses_weather()`, `available()`, `field_catalog()` (see Display Modes below)
 - `firmware/pico/reminders.py` — Pure reminder scheduling (calendar maths on local epoch seconds, `latest_occurrence()`, `next_occurrence()`, `active()`, `finished()`, `validate()`); host-tested in `firmware/pico/test/`
+- `firmware/pico/bme280.py` — BME280 indoor sensor driver (I2C1, GP2/GP3); pure compensation functions + `BME280(i2c).read()`; host-tested in `firmware/pico/test/`
 - `firmware/pico/tz.py` — Timezone table with DST rules (~35 zones), `get_offset()`, `zone_list()`
 - `firmware/pico/deploy.sh` — Deploys all firmware files to Pico via `mpremote` (USB) or `POST /api/firmware/update` (`--ota [host]`)
 - `firmware/pico/index.html` — Built Preact SPA (served to browser)
@@ -140,7 +142,10 @@ Any new route or background task must preserve these invariants:
   `get_module_addresses()`) as well as writes — **and every persistent
   config-file write** must happen inside `async with mutation_lock:`. An
   interleaved read landing inside the ATtiny's documented 20 ms single-slot
-  buffer window can drop a legitimate command.
+  buffer window can drop a legitimate command. This applies to the module
+  bus (I2C0) only — the indoor BME280 lives on I2C1, a separate bus, and
+  `read_sensor()` is fully synchronous (no `await`), so its transactions
+  can't interleave with anything and don't need the lock.
 - **The lock is non-reentrant.** Never acquire it from code that may already
   hold it in the same task — in particular, do not add an acquisition inside
   `get_module_addresses()` itself, since `print_string()` calls it from within
@@ -209,6 +214,10 @@ than the natural value; text fields keep the leftmost characters.
 | `wind_deg` | wind direction in degrees, 0-359 | 2 | 3 |
 | `wind_dir` | 16-point compass (`N`, `NNE`, .. `NNW`; no zero-pad) | 2 | 3 |
 | `condition` | WMO weather code as text: `CLR`, `PCLD`, `CLD`, `FOG`, `DRZL`, `ICE`, `RAIN`, `SNOW`, `SHWR`, `TSTM` (no zero-pad) | 3 | 4 |
+| `indoor_temp_f` | indoor °F (BME280) | 2 | 3 |
+| `indoor_temp_c` | indoor °C (BME280) | 2 | 3 |
+| `indoor_humidity` | indoor relative humidity (BME280) | 2 | 3 |
+| `pressure_hpa` | barometric pressure, hPa (BME280) | 3 | 4 |
 
 The weather fields (`temperature_*` through `condition`) all come from the
 same `get_weather()` fetch, which returns a dict of raw readings
@@ -216,6 +225,43 @@ same `get_weather()` fetch, which returns a dict of raw readings
 its value from that dict. open-meteo only refreshes its `current` block
 every 15 minutes, so `WEATHER_UPDATE_INTERVAL` (60 s) polls more often than
 the data changes.
+
+**Indoor sensor.** The `indoor_temp_f`/`indoor_temp_c`/`indoor_humidity`/
+`pressure_hpa` fields come from a BME280 on I2C1 (GP2 SDA / GP3 SCL,
+physical pins 4/5), address `0x76` or `0x77`, detected once at boot (not
+retried) and read every `SENSOR_UPDATE_INTERVAL` (60 s), but only when the
+active template actually uses a sensor field. The read happens outside
+`mutation_lock` since I2C1 is a separate bus from the module chain on I2C0.
+If no sensor was detected, or a reading has never succeeded, every sensor
+field renders as dashes the same way weather fields do; a failed/implausible
+read afterward just keeps showing the last good values instead of reverting
+to dashes. Like any numeric field, `{pressure_hpa:3}` keeps the rightmost
+digits (1013 -> "013"), so use natural width or `:4` to see the full value.
+
+The sensor is optional and auto-detected: nothing is configured. Whether it was
+found at boot is reported as `temp_sensor_present` by `GET /api/state` and
+`GET /api/layout`. Without it, `tick()` never schedules a sensor refresh, `GET
+/api/layouts` marks every layout using a sensor field `available: false`
+(`layout.available(tokens, layout_sources())`), and ControlPage's dropdown
+hides those layouts. That's display-only filtering, like `required_width`:
+saving such a layout is still allowed, and one that is already active keeps
+rendering dashes. `layout_sources()` in `main.py` is the single place
+that decides which field sources exist on this device (`time`, `weather`, plus
+`sensor` when detected). A future sensor gets its own `source` and its own
+`*_present` flag.
+
+`GET /api/layout_fields` returns `layout.field_catalog()`: every template
+field in display order (`layout.FIELD_NAMES`, an explicit tuple because
+MicroPython dicts aren't ordered) with `source`, `min_width`, `max_width`,
+`available`, and an `example` rendered at natural width from current data.
+The example is dashes when that data is missing, and `null` when the field
+is unavailable. Weather and the sensor are normally read only while a layout
+uses them, so the endpoint fetches whichever has never been read: one
+open-meteo request (outside `mutation_lock`, since it doesn't touch I2C) and
+one sensor read. SetupPage's Layouts card builds its field reference from
+this endpoint instead of hardcoding it. The reference shows each example as
+miniature flaps, says "no data yet" for dashes, and adds a group note when
+the sensor is missing.
 
 A width below a field's minimum, a zero-pad flag on `ampm`/`weekday`, or
 a `year` width other than 2/4 are all rejected at save time (`POST
@@ -315,9 +361,9 @@ cd firmware/pico
 ```
 
 - **USB** finds the Pico on `/dev/cu.usbmodem*` (macOS) or `/dev/ttyACM*` (Linux), uploads
-  `main.py`, `tz.py`, `layout.py`, `reminders.py`, `index.html`, `favicon.svg`, `setup.html`, `assets/index.js`,
-  `assets/index.css` via `mpremote`, then reboots. Requires `mpremote` (`pip install mpremote`).
-- **`--ota [host]`** (host defaults to `openflaps.local` via mDNS) zips those same nine
+  `main.py`, `tz.py`, `layout.py`, `reminders.py`, `bme280.py`, `index.html`, `favicon.svg`, `setup.html`,
+  `assets/index.js`, `assets/index.css` via `mpremote`, then reboots. Requires `mpremote` (`pip install mpremote`).
+- **`--ota [host]`** (host defaults to `openflaps.local` via mDNS) zips those same ten
   files (from `firmware/pico/`, so entry names match what the device expects) plus a
   generated `manifest.json` listing them, and POSTs the zip
   to `http://<host>/api/firmware/update` with `curl`; the Pico streams it straight to flash,
@@ -327,8 +373,8 @@ cd firmware/pico
 
   ```bash
   cd firmware/pico
-  echo '["main.py","tz.py","layout.py","reminders.py","index.html","favicon.svg","setup.html","assets/index.js","assets/index.css"]' > manifest.json
-  zip -0 -r update.zip main.py tz.py layout.py reminders.py index.html favicon.svg setup.html assets/index.js assets/index.css manifest.json
+  echo '["main.py","tz.py","layout.py","reminders.py","bme280.py","index.html","favicon.svg","setup.html","assets/index.js","assets/index.css"]' > manifest.json
+  zip -0 -r update.zip main.py tz.py layout.py reminders.py bme280.py index.html favicon.svg setup.html assets/index.js assets/index.css manifest.json
   rm manifest.json
   curl -X POST -H "Content-Type: application/zip" --data-binary @update.zip http://<host>/api/firmware/update
   ```
@@ -424,7 +470,7 @@ All three are gitignored.
 
 ## Testing & Simulation
 
-- **Pico host unit tests:** `cd firmware/pico && python3 -m unittest discover -s test` — covers the pure `reminders.py` module (CPython, no MicroPython needed).
+- **Pico host unit tests:** `cd firmware/pico && python3 -m unittest discover -s test` — covers the pure `reminders.py` module, the `bme280.py` driver and the `layout.py` sensor fields (CPython, no MicroPython needed); `main.py` itself stays manual.
 - **ATtiny84 host unit tests:** `cd firmware/attiny84/test-host && python3 -m platformio test -e native`
   (characterization tests + 1 toolchain-harness check, PlatformIO `native`
   env + ArduinoFake + Unity). Covers the extracted headers

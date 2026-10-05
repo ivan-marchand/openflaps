@@ -27,6 +27,7 @@ export const api = {
   getLayout: () => fetch(BASE + '/api/layout').then(r => r.json()),
   saveLayout: (charPerRow) => post('/api/setup/layout', { char_per_row: charPerRow }),
   getLayouts: () => fetch(BASE + '/api/layouts').then(r => r.json()),
+  getLayoutFields: () => fetch(BASE + '/api/layout_fields').then(r => r.json()),
   saveLayouts: (layouts, activeLayout) => post('/api/layouts', { layouts, active_layout: activeLayout }),
   getModules: () => fetch(BASE + '/api/modules').then(r => r.json()),
   updateModule: (address, newAddress, speed, offset) =>

@@ -11,6 +11,7 @@ import uasyncio as asyncio
 import tz
 import layout
 import reminders
+import bme280
 
 
 # ----------------------------
@@ -37,6 +38,11 @@ DEFAULT_ACTIVE_LAYOUT = "Clock"
 # I2C
 i2c = I2C(0, freq=100000, scl=Pin(1), sda=Pin(0))
 BASE_ADDR = 0x11   # first character module address
+
+# Indoor BME280 on its own controller (I2C1, GP2/GP3 = physical pins 4/5).
+# A separate bus from the modules, so reads never take mutation_lock --
+# that lock exists to keep module-bus traffic from interleaving.
+sensor_i2c = I2C(1, freq=100000, sda=Pin(2), scl=Pin(3))
 
 # Tracks the (char, keep_energized) last actually sent to each address, so
 # print_string() can skip modules whose target hasn't changed. Resending an
@@ -67,6 +73,7 @@ LED_BLINK_FAST_MS = 150        # I2C modules found, WiFi not connected
 NTP_RETRY_INTERVAL = 300    # seconds between NTP retries on failure
 NTP_SYNC_INTERVAL = 3600    # seconds between successful NTP syncs
 WEATHER_UPDATE_INTERVAL = 60   # seconds between outdoor weather refreshes
+SENSOR_UPDATE_INTERVAL = 60    # seconds between indoor BME280 reads
 WIFI_CONNECT_TIMEOUT_S = 30 # seconds to wait for saved WiFi creds to connect
                             # before assuming they're stale (network changed,
                             # password rotated, device moved) and falling
@@ -1049,6 +1056,48 @@ status_line = "Ready."
 minutes = None
 last_weather_update = 0
 last_weather = None
+last_sensor_update = 0
+last_sensor = None
+sensor = None              # bme280.BME280 once detected at boot, else None
+sensor_error_logged = False
+
+# Out-of-range values mean a glitched read (loose wire, bus noise), not a
+# real reading -- the BME280's rated range is -40..85 C and 300..1100 hPa.
+def _sensor_plausible(r):
+    return (
+        -40 <= r["temp_c"] <= 85
+        and 0 <= r["humidity"] <= 100
+        and r["pressure_hpa"] is not None
+        and 300 <= r["pressure_hpa"] <= 1100
+    )
+
+def layout_sources():
+    # Field sources usable on this device right now (see layout.field_catalog):
+    # time and weather always, the indoor sensor only if it was found at boot.
+    if sensor is None:
+        return ("time", "weather")
+    return ("time", "weather", "sensor")
+
+def read_sensor():
+    # Returns a fresh reading dict, or None if there's no sensor or this
+    # read failed. Logs once per failure streak rather than every minute.
+    global sensor_error_logged
+    if sensor is None:
+        return None
+    try:
+        # Forced-mode measurement blocks the event loop synchronously for
+        # ~10 ms (bounded at 50 ms by the driver's timeout) -- acceptable
+        # since this only runs once a minute (SENSOR_UPDATE_INTERVAL).
+        r = sensor.read()
+        if not _sensor_plausible(r):
+            raise OSError("implausible reading {}".format(r))
+    except OSError as e:
+        if not sensor_error_logged:
+            print("BME280 read error:", e)
+            sensor_error_logged = True
+        return None
+    sensor_error_logged = False
+    return r
 
 current_layouts = DEFAULT_LAYOUTS
 active_layout_name = DEFAULT_ACTIVE_LAYOUT
@@ -1071,7 +1120,7 @@ last_reminder_eval_minute = None  # time.time() // 60 of the last evaluation
 time_synced = False           # reminders wait for the first successful NTP sync
 
 async def render_active_layout():
-    global last_text, minutes, last_weather_update, last_weather
+    global last_text, minutes, last_weather_update, last_weather, last_sensor_update, last_sensor
     lt = time.localtime(time.time() + tz.get_offset(current_timezone))
     minutes = lt[4]
     tokens = layout_tokens_cache[active_layout_name]
@@ -1082,7 +1131,12 @@ async def render_active_layout():
         if fetched is not None:
             last_weather = fetched
             weather = fetched
-    text, keep_energized = layout.render(tokens, lt, weather)
+    if sensor is not None and layout.uses_sensor(tokens) and time.time() - last_sensor_update >= SENSOR_UPDATE_INTERVAL:
+        last_sensor_update = time.time()
+        fresh = read_sensor()
+        if fresh is not None:
+            last_sensor = fresh
+    text, keep_energized = layout.render(tokens, lt, weather, last_sensor)
     async with mutation_lock:
         # A reminder (or other mode switch) may have taken over while the
         # weather await above was in flight -- don't overwrite it with a
@@ -1221,6 +1275,12 @@ cached_module_count = len(known_module_addresses)
 # max_concurrent_modules, and never returns to this point (it resets).
 max_concurrent_modules = load_max_concurrent()
 char_per_row = load_char_per_row()
+
+try:
+    sensor = bme280.BME280(sensor_i2c)
+    print("BME280 found at", hex(sensor.addr))
+except Exception as e:
+    print("BME280 not found, indoor sensor fields will show dashes:", e)
 
 wlan, ip = connect_wifi()
 _synced = sync_time()
@@ -1518,7 +1578,7 @@ async def handle_firmware_update(conn, header_bytes, body_prefix):
 # Request handler
 # ----------------------------
 async def handle_request(conn):
-    global mode, last_text, status_line, current_timezone, minutes, last_weather_update, detected_location
+    global mode, last_text, status_line, current_timezone, minutes, last_weather_update, detected_location, last_sensor_update, last_weather
     global current_reminders, reminder_next_id, reminders_dirty, reminders_need_save
     try:
         header_bytes, body_prefix = await async_read_http_headers(conn)
@@ -1569,6 +1629,7 @@ async def handle_request(conn):
                 "module_count": cached_module_count,
                 "char_per_row": char_per_row,
                 "active_layout": active_layout_name,
+                "temp_sensor_present": sensor is not None,
                 "reminder": {"id": shown_reminder_id, "text": last_text} if mode == MODE_REMINDER else None,
             })
 
@@ -1600,6 +1661,7 @@ async def handle_request(conn):
                 dismiss_showing_reminders()
                 mode = MODE_LAYOUT
                 last_weather_update = 0
+                last_sensor_update = 0
                 await render_active_layout()
                 status_line = "Switched to {}".format(active_layout_name)
                 await async_http_send_json(conn, {"ok": True, "status": status_line})
@@ -1877,6 +1939,7 @@ async def handle_request(conn):
             await async_http_send_json(conn, {
                 "char_per_row": char_per_row,
                 "module_count": cached_module_count,
+                "temp_sensor_present": sensor is not None,
             })
 
         elif route == "/api/setup/layout" and method == "POST":
@@ -1893,6 +1956,7 @@ async def handle_request(conn):
                 await async_http_send_json(conn, {"ok": True})
 
         elif route == "/api/layouts" and method == "GET":
+            sources = layout_sources()
             await async_http_send_json(conn, {
                 "layouts": [
                     {
@@ -1900,10 +1964,26 @@ async def handle_request(conn):
                         "template": entry["template"],
                         "align": layout_align_cache[entry["name"]],
                         "required_width": layout_required_width_cache[entry["name"]],
+                        "available": layout.available(layout_tokens_cache[entry["name"]], sources),
                     }
                     for entry in current_layouts
                 ],
                 "active_layout": active_layout_name,
+            })
+
+        elif route == "/api/layout_fields" and method == "GET":
+            # Examples use current data. Weather and the sensor are normally
+            # only read while a layout uses them, so fetch whichever has never
+            # been read yet: one open-meteo request (no lock held -- it never
+            # touches I2C) and a ~10 ms read on the sensor's own bus.
+            if last_weather is None:
+                last_weather = await get_weather()
+            reading = last_sensor
+            if reading is None and sensor is not None:
+                reading = read_sensor()
+            lt = time.localtime(time.time() + tz.get_offset(current_timezone))
+            await async_http_send_json(conn, {
+                "fields": layout.field_catalog(layout_sources(), lt, last_weather, reading),
             })
 
         elif route == "/api/layouts" and method == "POST":
@@ -2056,6 +2136,8 @@ async def tick():
         current_minutes = lt[4]
         needs_render = redisplay or current_minutes != minutes
         if layout.uses_weather(tokens) and now - last_weather_update >= WEATHER_UPDATE_INTERVAL:
+            needs_render = True
+        if sensor is not None and layout.uses_sensor(tokens) and now - last_sensor_update >= SENSOR_UPDATE_INTERVAL:
             needs_render = True
         if needs_render:
             await render_active_layout()

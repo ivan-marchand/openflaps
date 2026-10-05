@@ -238,3 +238,57 @@ select {
 .reminder-form > form > input { display: block; width: 100%; box-sizing: border-box; }
 
 .char-count { font-size: 0.85em; opacity: 0.7; }
+
+/* SetupPage Layouts card: field reference (GET /api/layout_fields) */
+.field-ref { margin: 4px 0 14px; }
+.field-ref-group { margin-top: 12px; }
+.field-ref-row {
+  display: grid;
+  /* rem, not em: the header row has a smaller font, and em columns would shrink with it */
+  grid-template-columns: minmax(0, 1fr) 3rem 5.5rem;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+.field-ref-head {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.7rem;
+  color: #666;
+  border-bottom: 1px solid #333;
+  padding-bottom: 4px;
+}
+.field-ref-name {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.85rem;
+  color: #e0e0e0;
+  overflow-wrap: anywhere;
+}
+.field-ref-width {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.8rem;
+  color: #888;
+}
+.field-ref-note {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.75rem;
+  color: #888;
+}
+.field-ref-group > .field-ref-note { margin-bottom: 4px; }
+.field-ref-off .field-ref-name,
+.field-ref-off .field-ref-width { opacity: 0.4; }
+
+.mini-flaps { display: inline-flex; gap: 2px; }
+.mini-flap {
+  width: 15px;
+  height: 21px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  border-radius: 2px;
+  /* top/bottom halves with the black seam, like the display's tiles */
+  background: linear-gradient(#3a3a3a 0 calc(50% - 0.5px), #000 calc(50% - 0.5px) calc(50% + 0.5px), #2c2c2c calc(50% + 0.5px));
+}

@@ -89,12 +89,14 @@ def _degrees(deg):
 #   "time"    -- "fn"(localtime) -> raw value.
 #   "weather" -- "key" names a reading in the dict main.py's get_weather()
 #                returns; "convert"(reading) -> raw value.
+#   "sensor"  -- same as "weather", but the dict is the indoor BME280's
+#                reading (bme280.BME280.read()).
 # Raw values are int for numeric fields and str for text fields. A weather
-# field yields None -- rendered as dashes -- when there is no reading yet
-# (the dict itself is None until the first successful fetch), the API omitted
-# that reading, or "convert" has no mapping for it. "widths" (only on `year`)
-# restricts explicit widths to that exact set, taking precedence over
-# "min_width".
+# or sensor field yields None -- rendered as dashes -- when there is no
+# reading yet (the dict itself is None until the first successful
+# fetch/read), the reading omitted that key, or "convert" has no mapping
+# for it. "widths" (only on `year`) restricts explicit widths to that exact
+# set, taking precedence over "min_width".
 FIELDS = {
     "month": {"source": "time", "fn": _f_month, "numeric": True, "min_width": 2, "max_natural": 2},
     "month_name": {"source": "time", "fn": _f_month_name, "numeric": False, "min_width": 3, "max_natural": 3},
@@ -113,7 +115,20 @@ FIELDS = {
     "wind_deg": {"source": "weather", "key": "wind_deg", "convert": _degrees, "numeric": True, "min_width": 2, "max_natural": 3},
     "wind_dir": {"source": "weather", "key": "wind_deg", "convert": _compass, "numeric": False, "min_width": 2, "max_natural": 3},
     "condition": {"source": "weather", "key": "code", "convert": _CONDITIONS.get, "numeric": False, "min_width": 3, "max_natural": 4},
+    "indoor_temp_f": {"source": "sensor", "key": "temp_c", "convert": _c_to_f, "numeric": True, "min_width": 2, "max_natural": 3},
+    "indoor_temp_c": {"source": "sensor", "key": "temp_c", "convert": round, "numeric": True, "min_width": 2, "max_natural": 3},
+    "indoor_humidity": {"source": "sensor", "key": "humidity", "convert": round, "numeric": True, "min_width": 2, "max_natural": 3},
+    "pressure_hpa": {"source": "sensor", "key": "pressure_hpa", "convert": round, "numeric": True, "min_width": 3, "max_natural": 4},
 }
+
+# Display order for field_catalog(). Kept as an explicit tuple because
+# MicroPython dicts don't preserve insertion order; a host test checks it
+# lists every FIELDS entry exactly once.
+FIELD_NAMES = (
+    "month", "month_name", "day", "year", "hours", "hours12", "minutes", "ampm", "weekday",
+    "temperature_f", "temperature_c", "humidity", "wind_mph", "wind_kmh", "wind_deg", "wind_dir", "condition",
+    "indoor_temp_f", "indoor_temp_c", "indoor_humidity", "pressure_hpa",
+)
 
 
 def _parse_field_spec(inner):
@@ -176,8 +191,45 @@ def parse_template(template):
     return tokens
 
 
+def _uses_source(tokens, source):
+    return any(t[0] == "field" and FIELDS[t[1]]["source"] == source for t in tokens)
+
+
 def uses_weather(tokens):
-    return any(t[0] == "field" and FIELDS[t[1]]["source"] == "weather" for t in tokens)
+    return _uses_source(tokens, "weather")
+
+
+def uses_sensor(tokens):
+    return _uses_source(tokens, "sensor")
+
+
+def available(tokens, sources):
+    # True when every field in the template comes from one of `sources`
+    # (e.g. ("time", "weather") on a device with no indoor sensor).
+    return all(t[0] != "field" or FIELDS[t[1]]["source"] in sources for t in tokens)
+
+
+def field_catalog(sources, localtime, weather, sensor):
+    # Every template field with its width limits, whether its source is in
+    # `sources`, and an example rendered at natural width from the current
+    # data (dashes when that data is missing, None when unavailable).
+    catalog = []
+    for name in FIELD_NAMES:
+        field = FIELDS[name]
+        is_available = field["source"] in sources
+        widths = field.get("widths")
+        example = None
+        if is_available:
+            example = render([("field", name, None, False)], localtime, weather, sensor)[0]
+        catalog.append({
+            "name": name,
+            "source": field["source"],
+            "min_width": min(widths) if widths else field["min_width"],
+            "max_width": field["max_natural"],
+            "available": is_available,
+            "example": example,
+        })
+    return catalog
 
 
 def required_width(tokens):
@@ -217,16 +269,18 @@ def _render_text(raw, width):
     return raw
 
 
-def _field_value(field, localtime, weather):
-    if field["source"] == "time":
+def _field_value(field, localtime, weather, sensor):
+    source = field["source"]
+    if source == "time":
         return field["fn"](localtime)
-    reading = None if weather is None else weather.get(field["key"])
+    readings = weather if source == "weather" else sensor
+    reading = None if readings is None else readings.get(field["key"])
     if reading is None:
         return None
     return field["convert"](reading)
 
 
-def render(tokens, localtime, weather):
+def render(tokens, localtime, weather, sensor=None):
     text = ""
     keep_energized = []
     for token in tokens:
@@ -238,7 +292,7 @@ def render(tokens, localtime, weather):
 
         _, name, width, zero_pad = token
         field = FIELDS[name]
-        raw = _field_value(field, localtime, weather)
+        raw = _field_value(field, localtime, weather, sensor)
 
         if raw is None:
             rendered = "-" * (width if width is not None else 3)

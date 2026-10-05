@@ -112,7 +112,7 @@ export function ControlPage() {
           >
             <option value="" disabled>Layout…</option>
             {layouts
-              .filter(l => l.required_width <= state.module_count)
+              .filter(l => l.required_width <= state.module_count && l.available !== false)
               .map(l => (
                 <option key={l.name} value={l.name}>{l.name}</option>
               ))}

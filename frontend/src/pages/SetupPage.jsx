@@ -10,6 +10,58 @@ function formatOffset(seconds) {
   return `UTC${sign}${h}:${m}`
 }
 
+// Group order, headings and the note shown when a group's source isn't
+// available, for the Layouts card's field list (GET /api/layout_fields).
+const FIELD_SOURCES = [
+  ['time', 'Time', ''],
+  ['weather', 'Outdoor weather', ''],
+  ['sensor', 'Indoor sensor', 'No BME280 detected at boot. Layouts using these fields are hidden.'],
+]
+
+const isDashes = s => /^-+$/.test(s)
+
+// A field's example drawn as miniature flaps, one per character.
+function MiniFlaps({ text }) {
+  return (
+    <span class="mini-flaps" aria-label={text}>
+      {[...text].map((c, i) => <span key={i} class="mini-flap">{c === ' ' ? '\u00a0' : c}</span>)}
+    </span>
+  )
+}
+
+function FieldReference({ fields }) {
+  if (fields.length === 0) return null
+  return (
+    <div class="field-ref">
+      <div class="field-ref-row field-ref-head">
+        <span>field</span><span>width</span><span>example</span>
+      </div>
+      {FIELD_SOURCES.map(([source, label, unavailableNote]) => {
+        const group = fields.filter(f => f.source === source)
+        if (group.length === 0) return null
+        const groupAvailable = group.every(f => f.available)
+        return (
+          <div key={source} class="field-ref-group">
+            <div class="field-label">{label}</div>
+            {!groupAvailable && unavailableNote && <div class="field-ref-note">{unavailableNote}</div>}
+            {group.map(f => (
+              <div key={f.name} class={`field-ref-row${f.available ? '' : ' field-ref-off'}`}>
+                <code class="field-ref-name">{`{${f.name}}`}</code>
+                <span class="field-ref-width">{f.min_width === f.max_width ? f.min_width : `${f.min_width}–${f.max_width}`}</span>
+                <span>
+                  {!f.available ? null
+                    : isDashes(f.example) ? <span class="field-ref-note">no data yet</span>
+                    : <MiniFlaps text={f.example} />}
+                </span>
+              </div>
+            ))}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 export function SetupPage() {
   const [ssid, setSsid] = useState('')
   const [password, setPassword] = useState('')
@@ -24,6 +76,7 @@ export function SetupPage() {
   const [moduleCount, setModuleCount] = useState(null)
   const [layoutRows, setLayoutRows] = useState([])
   const [activeLayout, setActiveLayout] = useState('')
+  const [layoutFields, setLayoutFields] = useState([])
   const [firmwareFile, setFirmwareFile] = useState(null)
   const [status, setStatus] = useState('')
   const [busy, setBusy] = useState(false)
@@ -49,6 +102,7 @@ export function SetupPage() {
       setLayoutRows((data.layouts || []).map(l => ({ name: l.name, template: l.template, align: l.align || 'left' })))
       setActiveLayout(data.active_layout || '')
     }).catch(() => {})
+    api.getLayoutFields().then(data => setLayoutFields(data.fields || [])).catch(() => {})
   }, [])
 
   async function saveWifi(e) {
@@ -314,17 +368,15 @@ export function SetupPage() {
               <button type="button" class="btn" disabled={layoutRows.length <= 1} onClick={() => removeLayoutRow(i)}>DEL</button>
             </div>
           ))}
-          <div style="margin-bottom:10px;">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
             <button type="button" class="btn" onClick={addLayoutRow}>+ ADD LAYOUT</button>
+            <button class="btn" type="submit" disabled={busy || layoutRows.length === 0}>SAVE LAYOUTS</button>
           </div>
           <div style="margin-bottom:10px;font-size:0.85em;opacity:0.7;">
-            Fields: month, month_name, day, year, hours, hours12, minutes, ampm, weekday,
-            temperature_f, temperature_c, humidity, wind_mph, wind_kmh, wind_deg,
-            wind_dir, condition. Use {'{field}'} for natural width,
-            {'{field:N}'} to space-pad/truncate, {'{field:0N}'} to zero-pad/truncate.
+            Use {'{field}'} for natural width, {'{field:N}'} to space-pad/truncate, {'{field:0N}'} to zero-pad/truncate.
             Alignment positions the text within each display row when it is shorter than the row.
           </div>
-          <button class="btn" type="submit" disabled={busy || layoutRows.length === 0}>SAVE LAYOUTS</button>
+          <FieldReference fields={layoutFields} />
         </form>
       </div>
 
