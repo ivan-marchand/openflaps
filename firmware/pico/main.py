@@ -242,6 +242,23 @@ def load_layouts():
     active = data.get("active_layout")
     if active not in names:
         active = names[0]
+    # Layouts saved before a field's min_width was raised (e.g. {humidity:2})
+    # would now fail to parse and be skipped -- widen them and persist that,
+    # once, instead. Runs at boot, before the server starts, so no lock.
+    widened = False
+    for entry in layouts:
+        template = layout.widen_template(entry["template"])
+        if template != entry["template"]:
+            print("Layout '{}': widened {} -> {}".format(entry["name"], entry["template"], template))
+            entry["template"] = template
+            widened = True
+    if widened and layouts is not DEFAULT_LAYOUTS:
+        data["layouts"] = layouts
+        data["active_layout"] = active
+        try:
+            _save_layout_config(data)
+        except Exception as e:
+            print("Failed to save widened layouts:", e)
     return layouts, active
 
 def save_layouts(layouts, active):

@@ -24,7 +24,8 @@ class SensorFieldTest(unittest.TestCase):
     def test_explicit_widths(self):
         self.assertEqual(render("{indoor_temp_f:3}", sensor=SENSOR), " 71")
         self.assertEqual(render("{indoor_humidity:03}", sensor=SENSOR), "044")
-        self.assertEqual(render("{pressure_hpa:3}", sensor=SENSOR), "013")
+        self.assertEqual(render("{pressure_hpa:4}", sensor=SENSOR), "1013")
+        self.assertEqual(render("{pressure_hpa:5}", sensor=SENSOR), " 1013")
 
     def test_negative_indoor_temp(self):
         self.assertEqual(render("{indoor_temp_c:3}", sensor={"temp_c": -4.2}), " -4")
@@ -39,10 +40,10 @@ class SensorFieldTest(unittest.TestCase):
     def test_sensor_and_weather_are_independent(self):
         weather = {"temp_c": 10.0}
         self.assertEqual(
-            render("{temperature_c:2}{indoor_temp_c:2}", weather=weather, sensor=SENSOR),
-            "1022",
+            render("{temperature_c:3}{indoor_temp_c:2}", weather=weather, sensor=SENSOR),
+            " 1022",
         )
-        self.assertEqual(render("{temperature_c:2}", sensor=SENSOR), "--")
+        self.assertEqual(render("{temperature_c:3}", sensor=SENSOR), "---")
 
     def test_render_without_sensor_arg_still_works(self):
         tokens = layout.parse_template("{hours:02}{minutes:02}")
@@ -54,8 +55,8 @@ class SensorFieldTest(unittest.TestCase):
                 layout.parse_template("{%s:1}" % name)
             layout.parse_template("{%s:2}" % name)
         with self.assertRaises(ValueError):
-            layout.parse_template("{pressure_hpa:2}")
-        layout.parse_template("{pressure_hpa:3}")
+            layout.parse_template("{pressure_hpa:3}")
+        layout.parse_template("{pressure_hpa:4}")
 
     def test_required_width(self):
         tokens = layout.parse_template("{indoor_temp_f}F{pressure_hpa}")

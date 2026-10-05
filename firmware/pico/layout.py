@@ -85,6 +85,13 @@ def _degrees(deg):
     return int(round(deg)) % 360
 
 
+# "min_width" is the narrowest explicit width a field accepts. A numeric value
+# wider than its width keeps only its rightmost digits, which is right for
+# {year:2} but shows a wrong number for a measurement (-15 C as "-5", 100 % as
+# "00"), so measurement fields that can realistically need their full width
+# require it. Indoor temperature and humidity keep 2 -- indoors never reaches
+# 100 or below -9. widen_template() upgrades layouts saved under older limits.
+#
 # Each descriptor has a "source":
 #   "time"    -- "fn"(localtime) -> raw value.
 #   "weather" -- "key" names a reading in the dict main.py's get_weather()
@@ -107,18 +114,18 @@ FIELDS = {
     "minutes": {"source": "time", "fn": _f_minutes, "numeric": True, "min_width": 2, "max_natural": 2},
     "ampm": {"source": "time", "fn": _f_ampm, "numeric": False, "min_width": 2, "max_natural": 2},
     "weekday": {"source": "time", "fn": _f_weekday, "numeric": False, "min_width": 3, "max_natural": 3},
-    "temperature_f": {"source": "weather", "key": "temp_c", "convert": _c_to_f, "numeric": True, "min_width": 2, "max_natural": 3},
-    "temperature_c": {"source": "weather", "key": "temp_c", "convert": round, "numeric": True, "min_width": 2, "max_natural": 3},
-    "humidity": {"source": "weather", "key": "humidity", "convert": round, "numeric": True, "min_width": 2, "max_natural": 3},
-    "wind_mph": {"source": "weather", "key": "wind_kmh", "convert": _kmh_to_mph, "numeric": True, "min_width": 2, "max_natural": 3},
-    "wind_kmh": {"source": "weather", "key": "wind_kmh", "convert": round, "numeric": True, "min_width": 2, "max_natural": 3},
-    "wind_deg": {"source": "weather", "key": "wind_deg", "convert": _degrees, "numeric": True, "min_width": 2, "max_natural": 3},
+    "temperature_f": {"source": "weather", "key": "temp_c", "convert": _c_to_f, "numeric": True, "min_width": 3, "max_natural": 3},
+    "temperature_c": {"source": "weather", "key": "temp_c", "convert": round, "numeric": True, "min_width": 3, "max_natural": 3},
+    "humidity": {"source": "weather", "key": "humidity", "convert": round, "numeric": True, "min_width": 3, "max_natural": 3},
+    "wind_mph": {"source": "weather", "key": "wind_kmh", "convert": _kmh_to_mph, "numeric": True, "min_width": 3, "max_natural": 3},
+    "wind_kmh": {"source": "weather", "key": "wind_kmh", "convert": round, "numeric": True, "min_width": 3, "max_natural": 3},
+    "wind_deg": {"source": "weather", "key": "wind_deg", "convert": _degrees, "numeric": True, "min_width": 3, "max_natural": 3},
     "wind_dir": {"source": "weather", "key": "wind_deg", "convert": _compass, "numeric": False, "min_width": 2, "max_natural": 3},
     "condition": {"source": "weather", "key": "code", "convert": _CONDITIONS.get, "numeric": False, "min_width": 3, "max_natural": 4},
     "indoor_temp_f": {"source": "sensor", "key": "temp_c", "convert": _c_to_f, "numeric": True, "min_width": 2, "max_natural": 3},
     "indoor_temp_c": {"source": "sensor", "key": "temp_c", "convert": round, "numeric": True, "min_width": 2, "max_natural": 3},
     "indoor_humidity": {"source": "sensor", "key": "humidity", "convert": round, "numeric": True, "min_width": 2, "max_natural": 3},
-    "pressure_hpa": {"source": "sensor", "key": "pressure_hpa", "convert": round, "numeric": True, "min_width": 3, "max_natural": 4},
+    "pressure_hpa": {"source": "sensor", "key": "pressure_hpa", "convert": round, "numeric": True, "min_width": 4, "max_natural": 4},
 }
 
 # Display order for field_catalog(). Kept as an explicit tuple because
@@ -166,6 +173,31 @@ def _parse_field_spec(inner):
         )
 
     return name, width, zero_pad
+
+
+def widen_template(template):
+    # Raise any explicit width below its field's min_width up to that
+    # minimum, keeping zero-padding: "{humidity:2}" -> "{humidity:3}". Used on
+    # layouts saved before a min_width was raised, so they keep loading
+    # instead of failing parse_template(). Anything malformed is left as-is
+    # for parse_template() to reject.
+    out = ""
+    pos = 0
+    while True:
+        start = template.find("{", pos)
+        end = template.find("}", start) if start != -1 else -1
+        if end == -1:
+            return out + template[pos:]
+        out += template[pos:start]
+        inner = template[start + 1:end]
+        name, _, width_part = inner.partition(":")
+        field = FIELDS.get(name)
+        if field is not None and width_part.isdigit() and field.get("widths") is None \
+                and int(width_part) < field["min_width"]:
+            zero = "0" if width_part[0] == "0" and len(width_part) > 1 else ""
+            inner = "{}:{}{}".format(name, zero, field["min_width"])
+        out += "{" + inner + "}"
+        pos = end + 1
 
 
 def parse_template(template):

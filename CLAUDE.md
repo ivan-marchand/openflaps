@@ -193,7 +193,15 @@ characters with `{field}` placeholders.
   width digits selects zero-padding).
 
 Numeric fields truncate by keeping the rightmost digits when narrower
-than the natural value; text fields keep the leftmost characters.
+than the natural value; text fields keep the leftmost characters. That's right
+for `{year:2}`, but it would show a wrong number for a measurement (-15 °C
+as `-5`, 100 % as `00`, 1013 hPa as `013`). So the outdoor measurement fields
+and `pressure_hpa` have a minimum width equal to their maximum. Indoor
+temperature and humidity keep a minimum of 2, since indoors never reaches 100
+or goes below -9. A layout saved under the older, lower minimums is widened
+to the new minimum when the layouts load (`layout.widen_template()` in
+`load_layouts()`, e.g. `{humidity:2}` → `{humidity:3}`, keeping zero-padding),
+and the result is written back once, so no saved layout stops loading.
 
 | Field | Meaning | Min explicit width | Max natural width |
 |---|---|---|---|
@@ -206,18 +214,18 @@ than the natural value; text fields keep the leftmost characters.
 | `minutes` | 0-59 | 2 | 2 |
 | `ampm` | `"AM"`/`"PM"` (no zero-pad) | 2 | 2 |
 | `weekday` | `MON`..`SUN` (no zero-pad) | 3 | 3 |
-| `temperature_f` | outdoor °F | 2 | 3 |
-| `temperature_c` | outdoor °C | 2 | 3 |
-| `humidity` | outdoor relative humidity, 0-100 | 2 | 3 |
-| `wind_mph` | wind speed, mph | 2 | 3 |
-| `wind_kmh` | wind speed, km/h | 2 | 3 |
-| `wind_deg` | wind direction in degrees, 0-359 | 2 | 3 |
+| `temperature_f` | outdoor °F | 3 | 3 |
+| `temperature_c` | outdoor °C | 3 | 3 |
+| `humidity` | outdoor relative humidity, 0-100 | 3 | 3 |
+| `wind_mph` | wind speed, mph | 3 | 3 |
+| `wind_kmh` | wind speed, km/h | 3 | 3 |
+| `wind_deg` | wind direction in degrees, 0-359 | 3 | 3 |
 | `wind_dir` | 16-point compass (`N`, `NNE`, .. `NNW`; no zero-pad) | 2 | 3 |
 | `condition` | WMO weather code as text: `CLR`, `PCLD`, `CLD`, `FOG`, `DRZL`, `ICE`, `RAIN`, `SNOW`, `SHWR`, `TSTM` (no zero-pad) | 3 | 4 |
 | `indoor_temp_f` | indoor °F (BME280) | 2 | 3 |
 | `indoor_temp_c` | indoor °C (BME280) | 2 | 3 |
 | `indoor_humidity` | indoor relative humidity (BME280) | 2 | 3 |
-| `pressure_hpa` | barometric pressure, hPa (BME280) | 3 | 4 |
+| `pressure_hpa` | barometric pressure, hPa (BME280) | 4 | 4 |
 
 The weather fields (`temperature_*` through `condition`) all come from the
 same `get_weather()` fetch, which returns a dict of raw readings
@@ -235,8 +243,7 @@ active template actually uses a sensor field. The read happens outside
 If no sensor was detected, or a reading has never succeeded, every sensor
 field renders as dashes the same way weather fields do; a failed/implausible
 read afterward just keeps showing the last good values instead of reverting
-to dashes. Like any numeric field, `{pressure_hpa:3}` keeps the rightmost
-digits (1013 -> "013"), so use natural width or `:4` to see the full value.
+to dashes.
 
 The sensor is optional and auto-detected: nothing is configured. Whether it was
 found at boot is reported as `temp_sensor_present` by `GET /api/state` and
