@@ -31,6 +31,17 @@ static char char_set[] = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,:-!?/\xb0";
 // button press doesn't hold current forever.
 #define BUTTON_IDLE_TIMEOUT_MS 10000UL
 
+// Module status codes: byte 3 of the 5-byte I2C status response (see
+// module_status() in attiny_protocol.h). Values above BUSY are faults; an
+// old Pico reads any nonzero value as busy, a new one only 1.
+constexpr uint8_t MODULE_STATUS_READY = 0;
+constexpr uint8_t MODULE_STATUS_BUSY = 1;
+// Homing hit its step cap (see SplitFlapController::home_step_cap()): the
+// switch never closed or never released. Deliberately generic -- a jammed
+// drum, a broken/disconnected switch or a motor/driver fault can each cause
+// either case.
+constexpr uint8_t MODULE_STATUS_HOME_NOT_FOUND = 2;
+
 class PowerManagedStepper {
 public:
   PowerManagedStepper(uint32_t number_of_steps, uint8_t motor_pin_1, uint8_t motor_pin_2, uint8_t motor_pin_3, uint8_t motor_pin_4)
@@ -165,6 +176,27 @@ private:
                                 HOME_CLEAR_IF_NEEDED,
                                 HOME_SEEK_EDGE } _home_state = HOME_IDLE;
   bool _homing = false;
+  // Steps scheduled in the current homing phase (HOME_CLEAR_IF_NEEDED or
+  // HOME_SEEK_EDGE), checked against home_step_cap().
+  uint32_t _home_phase_steps = 0;
+  // Sticky: the last homing run gave up at the step cap. Cleared only by a
+  // later homing run that succeeds.
+  bool _home_not_found = false;
+
+  // A homing phase hit its step cap: stop, de-energize, drop any pending
+  // move and leave the position unknown (coils off forces a re-home on the
+  // next D), and report MODULE_STATUS_HOME_NOT_FOUND until a homing succeeds.
+  void abort_homing() {
+    _homing = false;
+    _home_state = HOME_IDLE;
+    _pending_move = false;
+    _moving = false;
+    _button_energized_hold = false;
+    _limit_switch_engaged = false;
+    _nb_of_steps_engaged = 0;
+    _home_not_found = true;
+    _stepper.deactivate();
+  }
 
   // One logical step (half-step) worth of "position". We treat every step we output as 1.
   void step_once() {
@@ -226,6 +258,7 @@ public:
   void initialize() {
     _limit_switch_engaged = (digitalRead(_limit_switch_pin) == HIGH);
     _nb_of_steps_engaged = 0;
+    _home_phase_steps = 0;
     _homing = true;
 
     // If switch engaged from the start, move until it releases (with debounce-ish count)
@@ -283,6 +316,20 @@ public:
   bool is_energized() const {
     return _stepper.is_active();
   }
+
+  bool is_home_not_found() const { return _home_not_found; }
+
+  // Status code for byte 3 of the I2C status response. Busy wins over the
+  // sticky fault, so a retry in progress reports BUSY.
+  uint8_t status() const {
+    if (is_busy()) return MODULE_STATUS_BUSY;
+    if (_home_not_found) return MODULE_STATUS_HOME_NOT_FOUND;
+    return MODULE_STATUS_READY;
+  }
+
+  // Max steps per homing phase: about 1.5 drum revolutions. A working switch
+  // is always found (and released) well within that from any position.
+  uint32_t home_step_cap() const { return _number_of_steps * 3 / 2; }
   // Read-only accessors. Added for tests + the simulator; no behaviour change.
   char current_char() const { return char_set[_current_char_index]; }
   uint32_t position() const { return _position; }
@@ -299,6 +346,10 @@ public:
     if (_stepper.pending() == 0) {
       const bool sw_high = (digitalRead(_limit_switch_pin) == HIGH);
       // Homing state machine: schedule steps gradually, never blocking
+      if (_homing && (_home_state == HOME_CLEAR_IF_NEEDED || _home_state == HOME_SEEK_EDGE)
+          && _home_phase_steps >= home_step_cap()) {
+        abort_homing();
+      }
       if (_homing) {
 
         switch (_home_state) {
@@ -307,10 +358,12 @@ public:
             if (_nb_of_steps_engaged > 50 && !sw_high) {
               _limit_switch_engaged = false;
               _nb_of_steps_engaged = 0;
+              _home_phase_steps = 0;
               _home_state = HOME_SEEK_EDGE;
               break;
             }
             _nb_of_steps_engaged++;
+            _home_phase_steps++;
             step_once();
             break;
 
@@ -322,6 +375,7 @@ public:
                 _nb_of_steps_engaged = 0;
                 _homing = false;
                 _home_state = HOME_IDLE;
+                _home_not_found = false;
                 if (_pending_move) {
                   // Homing was done to re-establish position before a
                   // requested move; continue straight into that move.
@@ -337,6 +391,7 @@ public:
               _limit_switch_engaged = true;
             }
 
+            _home_phase_steps++;
             step_once();
             break;
 

@@ -224,7 +224,7 @@ document.getElementById('i2c-read').onclick = () => {
   if (ack) {
     const b = M.HEAPU8.subarray(ptr, ptr + 5);
     document.getElementById('i2c-status').textContent =
-      `speed=${b[0]} offset=${(b[1] << 24) >> 24} missed=${(b[2] << 24) >> 24} busy=${b[3]} energized=${b[4]}`;
+      `speed=${b[0]} offset=${(b[1] << 24) >> 24} missed=${(b[2] << 24) >> 24} status=${["ready", "busy", "home_not_found"][b[3]] ?? b[3]} energized=${b[4]}`;
   } else {
     document.getElementById('i2c-status').textContent = 'no ACK';
   }

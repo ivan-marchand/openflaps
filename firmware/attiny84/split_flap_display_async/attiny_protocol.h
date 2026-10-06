@@ -66,13 +66,16 @@ inline CommandEffect handle_command(SplitFlapController& controller,
 }
 
 // The 5 status bytes returned on Wire.onRequest:
-// [speed, offset, avg_missed, busy, energized].
+// [speed, offset, avg_missed, status, energized]. `status` is a
+// MODULE_STATUS_* code (0 ready, 1 busy, 2 home not found); it was a 0/1
+// busy flag before, so the layout and length are unchanged. Keep in sync
+// with request_event() in the .ino.
 inline void module_status(SplitFlapController& controller,
                           const ModuleConfig& cfg, uint8_t out[5]) {
     out[0] = cfg.speed;
     out[1] = (uint8_t)cfg.offset;
     out[2] = (uint8_t)controller.get_average_missed_steps();
-    out[3] = controller.is_busy() ? 1 : 0;
+    out[3] = controller.status();
     out[4] = controller.is_energized() ? 1 : 0;
 }
 

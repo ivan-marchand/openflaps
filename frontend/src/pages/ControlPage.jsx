@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'preact/hooks'
 import { SplitFlapDisplay } from '../components/SplitFlapDisplay'
 import { api } from '../api'
+import { NO_HOME_HINT, toHex } from '../moduleFaults'
 import wordmark from '../assets/wordmark.svg'
 import './ControlPage.css'
 
@@ -61,6 +62,19 @@ export function ControlPage() {
         <SplitFlapDisplay text={state.text} charPerRow={state.char_per_row} moduleCount={state.module_count} />
         <div class="status-line">{state.status}</div>
       </div>
+
+      {state.module_faults?.length > 0 && (
+        <div class="display-card fault-banner" title={NO_HOME_HINT}>
+          <span>
+            ⚠ {state.module_faults.length === 1 ? 'Module' : 'Modules'}{' '}
+            <strong>{state.module_faults.map(f => toHex(f.address)).join(', ')}</strong>{' '}
+            {state.module_faults.every(f => f.status === 'home_not_found')
+              ? "couldn't find home and powered down. The display may be wrong until it's fixed."
+              : 'reported a fault. The display may be wrong until it\'s fixed.'}
+          </span>
+          <a class="setup-link" style="margin-top:0;" href="#/modules">MODULES</a>
+        </div>
+      )}
 
       {state.reminder && (
         <div class="display-card reminder-banner">
