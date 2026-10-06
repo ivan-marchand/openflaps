@@ -262,6 +262,141 @@ void test_button_hold_times_out(void) {
     TEST_ASSERT_FALSE(c.is_energized());
 }
 
+// Homing step cap: ~1.5 drum revolutions per homing phase.
+// _number_of_steps = 3413 -> 3413 * 3 / 2 = 5119.
+static constexpr uint32_t HOME_CAP = 5119;
+
+void test_home_step_cap_is_one_and_a_half_revs(void) {
+    SplitFlapController c = make_controller();
+    TEST_ASSERT_EQUAL_UINT32(HOME_CAP, c.home_step_cap());
+}
+
+// Switch never closes (broken/disconnected switch, jammed drum): homing gives
+// up after the cap with coils off, not busy, and the sticky fault set.
+void test_homing_gives_up_when_switch_never_closes(void) {
+    SplitFlapController c = make_controller();
+    c.setup(50, 0);
+    sim_limit_state = LOW;
+    c.initialize();
+
+    home_steps(c, HOME_CAP);
+    TEST_ASSERT_TRUE(c.is_homing());          // still within the cap
+    TEST_ASSERT_FALSE(c.is_home_not_found());
+
+    home_steps(c, 2);
+    TEST_ASSERT_FALSE(c.is_homing());
+    TEST_ASSERT_FALSE(c.is_busy());
+    TEST_ASSERT_FALSE(c.is_energized());
+    TEST_ASSERT_TRUE(c.is_home_not_found());
+    TEST_ASSERT_EQUAL_UINT8(MODULE_STATUS_HOME_NOT_FOUND, c.status());
+}
+
+// Switch stuck closed from the start: the clear phase never sees it release.
+void test_homing_gives_up_when_switch_stuck_closed(void) {
+    SplitFlapController c = make_controller();
+    c.setup(50, 0);
+    sim_limit_state = HIGH;
+    c.initialize();
+
+    home_steps(c, HOME_CAP);
+    TEST_ASSERT_TRUE(c.is_homing());
+
+    home_steps(c, 2);
+    TEST_ASSERT_FALSE(c.is_busy());
+    TEST_ASSERT_FALSE(c.is_energized());
+    TEST_ASSERT_EQUAL_UINT8(MODULE_STATUS_HOME_NOT_FOUND, c.status());
+}
+
+// Switch closes during the seek phase but then never releases.
+void test_homing_gives_up_when_switch_never_releases(void) {
+    SplitFlapController c = make_controller();
+    c.setup(50, 0);
+    sim_limit_state = LOW;
+    c.initialize();
+    home_steps(c, 100);
+    sim_limit_state = HIGH;                   // closes, then sticks
+
+    run_until_idle(c);
+    TEST_ASSERT_FALSE(c.is_energized());
+    TEST_ASSERT_EQUAL_UINT8(MODULE_STATUS_HOME_NOT_FOUND, c.status());
+}
+
+// The cap counts per phase: a clear phase that used most of its budget does
+// not eat into the seek phase's.
+void test_home_step_cap_is_counted_per_phase(void) {
+    SplitFlapController c = make_controller();
+    c.setup(50, 0);
+    sim_limit_state = HIGH;
+    c.initialize();
+    home_steps(c, HOME_CAP - 10);             // clear phase, nearly capped
+
+    sim_limit_state = LOW;                    // released -> seek phase
+    home_steps(c, HOME_CAP - 10);
+    TEST_ASSERT_TRUE(c.is_homing());
+    TEST_ASSERT_FALSE(c.is_home_not_found());
+}
+
+// A pending D move is dropped when its re-home times out.
+void test_homing_timeout_drops_pending_move(void) {
+    SplitFlapController c = make_controller();
+    c.setup(50, 0);
+    c.power_down();
+
+    sim_limit_state = LOW;
+    c.display_char('B');                      // coils off -> re-home first
+    TEST_ASSERT_TRUE(c.is_homing());
+
+    run_until_idle(c);                        // switch never closes
+    TEST_ASSERT_FALSE(c.is_moving());
+    TEST_ASSERT_FALSE(c.is_energized());
+    TEST_ASSERT_EQUAL_UINT8(MODULE_STATUS_HOME_NOT_FOUND, c.status());
+
+    // Nothing resumes the dropped move later.
+    home_steps(c, 100);
+    TEST_ASSERT_FALSE(c.is_busy());
+    TEST_ASSERT_FALSE(c.is_energized());
+}
+
+// The fault is sticky through a new (in-progress) attempt, reports busy while
+// that attempt runs, and clears once a homing run succeeds.
+void test_successful_homing_clears_home_not_found(void) {
+    SplitFlapController c = make_controller();
+    c.setup(50, 0);
+    sim_limit_state = LOW;
+    c.initialize();
+    run_until_idle(c);
+    TEST_ASSERT_EQUAL_UINT8(MODULE_STATUS_HOME_NOT_FOUND, c.status());
+
+    c.display_char('A');                      // coils off -> re-home again
+    TEST_ASSERT_EQUAL_UINT8(MODULE_STATUS_BUSY, c.status());
+    TEST_ASSERT_TRUE(c.is_home_not_found());  // still sticky mid-attempt
+
+    home_steps(c, 5);
+    sim_limit_state = HIGH;
+    home_steps(c, 60);
+    sim_limit_state = LOW;
+    home_steps(c, 3);
+    TEST_ASSERT_FALSE(c.is_home_not_found());
+
+    run_until_idle(c);
+    TEST_ASSERT_EQUAL_UINT8(MODULE_STATUS_READY, c.status());
+    TEST_ASSERT_EQUAL_UINT32(75, c.position());
+}
+
+// After a timeout, P works normally (the module is no longer busy).
+void test_power_down_works_after_home_not_found(void) {
+    SplitFlapController c = make_controller();
+    c.setup(50, 0);
+    sim_limit_state = LOW;
+    c.initialize();
+    run_until_idle(c);
+
+    c.power_down();
+    TEST_ASSERT_FALSE(c.is_busy());
+    TEST_ASSERT_FALSE(c.is_energized());
+    TEST_ASSERT_EQUAL_UINT8(MODULE_STATUS_HOME_NOT_FOUND, c.status());
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_steps_per_rev_uses_gear_ratio);
@@ -281,5 +416,13 @@ int main(int, char **) {
     RUN_TEST(test_power_down_is_noop_while_busy);
     RUN_TEST(test_next_char_keeps_energized_after_settling);
     RUN_TEST(test_button_hold_times_out);
+    RUN_TEST(test_home_step_cap_is_one_and_a_half_revs);
+    RUN_TEST(test_homing_gives_up_when_switch_never_closes);
+    RUN_TEST(test_homing_gives_up_when_switch_stuck_closed);
+    RUN_TEST(test_homing_gives_up_when_switch_never_releases);
+    RUN_TEST(test_home_step_cap_is_counted_per_phase);
+    RUN_TEST(test_homing_timeout_drops_pending_move);
+    RUN_TEST(test_successful_homing_clears_home_not_found);
+    RUN_TEST(test_power_down_works_after_home_not_found);
     return UNITY_END();
 }

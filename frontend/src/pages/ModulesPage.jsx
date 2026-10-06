@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'preact/hooks'
 import { api } from '../api'
+import { NO_HOME_HINT, toHex } from '../moduleFaults'
 import './ControlPage.css'
 
 const PAIRING_ADDRESS = 0x10  // 16 — reserved for new modules
@@ -9,10 +10,6 @@ function nextAvailableAddress(usedAddresses) {
     if (!usedAddresses.includes(i)) return i
   }
   return 0x11
-}
-
-function toHex(n) {
-  return '0x' + Number(n).toString(16).toUpperCase().padStart(2, '0')
 }
 
 function ModuleRow({ module, onSaved, usedAddresses }) {
@@ -71,6 +68,11 @@ function ModuleRow({ module, onSaved, usedAddresses }) {
         <span class="module-addr">
           {isPairing ? <span style="color:#f0a500;">PAIR</span> : toHex(addr)}
         </span>
+        {module.status === 'home_not_found' && (
+          <span class="module-fault" title={NO_HOME_HINT} aria-label={NO_HOME_HINT}>
+            NO HOME
+          </span>
+        )}
         <span class="module-stat" style={{ color: missedColor }}>MISSED {missedNA ? 'N/A' : module.missed_steps === null ? '—' : module.missed_steps}</span>
         <span class="module-stat" style={{ color: module.energized === null ? '#888' : module.energized ? '#f0a500' : '#888' }}>
           {module.energized === null ? '—' : module.energized ? 'ON' : 'off'}

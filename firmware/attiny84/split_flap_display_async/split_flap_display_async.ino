@@ -76,7 +76,8 @@ SplitFlapController controller(steps_per_revolution, 50.0f / 30.0f,
 char message[3] = { 0 };
 volatile bool new_message = false;
 
-// Response buffer for status requests: [speed, offset, avg_missed_steps, busy, energized]
+// Response buffer for status requests: [speed, offset, avg_missed_steps, status, energized]
+// (status: MODULE_STATUS_* code -- 0 ready, 1 busy, 2 home not found)
 char status_buffer[5] = { 10, 0, -1, 0, 0 };
 
 void enter_pairing_mode() {
@@ -130,12 +131,12 @@ void handle_button() {
 
 // Runs inside the Wire.onRequest ISR (clock-stretched on the bus): keep it
 // minimal. status_buffer[0]/[1] are already kept current by setup()/loop();
-// only the missed-step average and the busy/energized flags need refreshing
+// only the missed-step average, status code and energized flag need refreshing
 // here. The equivalent module_status() helper is used by the simulator and
 // the host tests.
 void request_event() {
   status_buffer[2] = (char)controller.get_average_missed_steps();
-  status_buffer[3] = controller.is_busy() ? 1 : 0;
+  status_buffer[3] = (char)controller.status();
   status_buffer[4] = controller.is_energized() ? 1 : 0;
   Wire.write(status_buffer, 5);
 }

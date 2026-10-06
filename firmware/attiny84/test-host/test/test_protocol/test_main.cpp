@@ -201,6 +201,27 @@ void test_short_press_paired_steps_one_char(void) {
     TEST_ASSERT_EQUAL_CHAR('A', c.current_char());
 }
 
+// Byte 3 is a status code: 0 ready, 1 busy, 2 home not found.
+void test_module_status_byte3_codes(void) {
+    SplitFlapController c = make_controller();
+    c.setup(10, 0);
+    ModuleConfig cfg{ 0x11, 10, 0 };
+    uint8_t out[5];
+
+    module_status(c, cfg, out);
+    TEST_ASSERT_EQUAL_UINT8(0, out[3]);
+
+    sim_limit_state = LOW;
+    handle_command(c, cfg, 'I', (char)0);
+    module_status(c, cfg, out);
+    TEST_ASSERT_EQUAL_UINT8(1, out[3]);
+
+    run_until_idle(c);                        // switch never closes -> capped
+    module_status(c, cfg, out);
+    TEST_ASSERT_EQUAL_UINT8(2, out[3]);
+    TEST_ASSERT_EQUAL_UINT8(0, out[4]);       // coils off
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_cmd_S_sets_speed_and_requests_persist);
@@ -213,6 +234,7 @@ int main(int, char **) {
     RUN_TEST(test_cmd_A_shows_address_char);
     RUN_TEST(test_cmd_A_shows_letter_for_high_address);
     RUN_TEST(test_module_status_byte_layout);
+    RUN_TEST(test_module_status_byte3_codes);
     RUN_TEST(test_cmd_D_default_deenergizes_after_settling);
     RUN_TEST(test_cmd_D_keep_energized_byte_stays_active);
     RUN_TEST(test_cmd_P_deenergizes_when_idle);

@@ -177,6 +177,18 @@ select {
   margin-left: auto;
 }
 
+.module-fault {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: #ff4444;
+  border: 1px solid #ff4444;
+  border-radius: 4px;
+  padding: 1px 5px;
+  cursor: help;
+}
+
 .module-card-fields {
   display: flex;
   gap: 8px;
@@ -219,6 +231,21 @@ select {
   justify-content: space-between;
   gap: 8px;
   border-color: #f0a500;
+}
+
+.fault-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-color: #ff4444;
+  color: #ff8888;
+  font-size: 0.85rem;
+}
+
+.fault-banner strong {
+  font-family: 'Courier New', Courier, monospace;
+  color: #ff4444;
 }
 
 .reminder-item {

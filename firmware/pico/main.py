@@ -781,12 +781,50 @@ def print_char(address: int, c: str, keep_energized: bool = False):
     except:
         print(f"Unable to send char to {hex(address)}")
 
+# Byte 3 of a module's status response. Older module firmware only sends
+# 0/1; anything >= 2 is a fault (see status_name()).
+MODULE_STATUS_READY = 0
+MODULE_STATUS_BUSY = 1
+MODULE_STATUS_HOME_NOT_FOUND = 2
+
+def status_name(code):
+    if code == MODULE_STATUS_READY:
+        return "ready"
+    if code == MODULE_STATUS_BUSY:
+        return "busy"
+    if code == MODULE_STATUS_HOME_NOT_FOUND:
+        return "home_not_found"
+    return "fault_{}".format(code)
+
+# Modules whose last status read reported a fault (code >= 2), address ->
+# code. Kept in memory so GET /api/state can warn about them without touching
+# the bus. Updated by every status read (dispatch polls, GET /api/modules) and
+# rechecked by update_led(), so a module fixed by hand (e.g. a button press
+# that homes it successfully) drops out within LED_I2C_RECHECK_INTERVAL.
+module_faults = {}
+
+def note_module_status(address, code):
+    if code >= MODULE_STATUS_HOME_NOT_FOUND:
+        module_faults[address] = code
+    else:
+        module_faults.pop(address, None)
+
+def module_faults_list():
+    return [{"address": a, "status": status_name(module_faults[a])}
+            for a in sorted(module_faults)]
+
 def is_module_busy(address):
+    # Busy only for status 1. Any fault code (>= 2, including ones a future
+    # module firmware may add) is not busy, so it frees its dispatch slot
+    # instead of hanging dispatch_throttled() (and mutation_lock) forever.
     try:
         data = i2c.readfrom(address, 4)
-        return bool(data[3])
     except Exception:
         return False
+    note_module_status(address, data[3])
+    if data[3] >= MODULE_STATUS_HOME_NOT_FOUND:
+        print("Module {} reported {}".format(hex(address), status_name(data[3])))
+    return data[3] == MODULE_STATUS_BUSY
 
 def get_module_addresses():
     addresses = i2c.scan()
@@ -810,8 +848,8 @@ async def dispatch_throttled(items, send):
     # Send one command per item -- send(*item), where item[0] is the module
     # address -- but only keep up to max_concurrent_modules modules busy at a
     # time, so at most that many stepper motors draw current simultaneously,
-    # capping peak power draw. A module that finishes (per its busy flag)
-    # frees a slot for the next queued item. Every command that starts a
+    # capping peak power draw. A module that finishes, or reports a fault (see
+    # is_module_busy()), frees a slot for the next queued item. Every command that starts a
     # move or a homing run (D, I) must go through here.
     limit = max(1, max_concurrent_modules)
     queue = list(items)
@@ -900,12 +938,14 @@ async def home_all():
 def read_module_params(address):
     try:
         data = i2c.readfrom(address, 5)
+        note_module_status(address, data[3])
         return {
             "address": address,
             "speed": data[0],
             "offset": data[1],
             "missed_steps": data[2],
-            "busy": bool(data[3]),
+            "busy": data[3] == MODULE_STATUS_BUSY,
+            "status": status_name(data[3]),
             "energized": bool(data[4]),
         }
     except Exception as e:
@@ -916,6 +956,7 @@ def read_module_params(address):
             "offset": None,
             "missed_steps": None,
             "busy": None,
+            "status": None,
             "energized": None,
         }
 
@@ -1647,6 +1688,7 @@ async def handle_request(conn):
                 "char_per_row": char_per_row,
                 "active_layout": active_layout_name,
                 "temp_sensor_present": sensor is not None,
+                "module_faults": module_faults_list(),
                 "reminder": {"id": shown_reminder_id, "text": last_text} if mode == MODE_REMINDER else None,
             })
 
@@ -2114,6 +2156,16 @@ async def update_led():
                     last_displayed_chars.pop(a, None)
                 redisplay_pending = True
             known_module_addresses = set(addresses)
+            # Re-read only the modules currently flagged as faulted (usually
+            # none), and forget any that left the bus.
+            for a in list(module_faults):
+                if a not in known_module_addresses:
+                    module_faults.pop(a, None)
+                    continue
+                try:
+                    note_module_status(a, i2c.readfrom(a, 4)[3])
+                except Exception:
+                    pass
 
     wifi_ok = bool(wlan and wlan.isconnected())
 
