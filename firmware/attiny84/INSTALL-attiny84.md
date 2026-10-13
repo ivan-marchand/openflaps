@@ -2,6 +2,9 @@
 
 Setup instructions for programming the OpenFlaps ATtiny84 module firmware using Arduino IDE and ATTinyCore.
 
+> **Command-line shortcut:** `firmware/attiny84/upload.sh` does steps 4–6 with
+> `arduino-cli` using the same board settings (see [Command-line upload](#command-line-upload)).
+
 ---
 
 ## Requirements
@@ -128,12 +131,13 @@ If wiring manually:
 
 | Setting | Value |
 |---|---|
-| Chip | ATtiny84A |
-| Clock | 8 MHz (internal) |
-| BOD | Disabled |
+| Chip | ATtiny84(a) |
+| Clock Source | 8 MHz (internal) |
+| B.O.D. Level | B.O.D. Enabled (2.7v) |
 | Save EEPROM | EEPROM retained |
-| Timer 1 Clock | CPU |
-| LTO | Disabled |
+| LTO | Enabled |
+| millis()/micros() | Enabled |
+| Pin Mapping | Clockwise (recommended, like damellis core) |
 | Programmer | Arduino as ISP **or** USBasp |
 
 ---
@@ -180,7 +184,7 @@ avrdude -c usbasp -p t84 \
 Expected output:
 ```
 lfuse = 0xe2   ← 8 MHz internal, no clock divider
-hfuse = 0xd7   ← EEPROM retained
+hfuse = 0xd5   ← EEPROM retained, BOD 2.7 V
 efuse = 0xff   ← factory default
 ```
 
@@ -199,6 +203,51 @@ The IDE will compile and upload via the Arduino as ISP programmer.
 
 > ⚠️ The ATtiny84 has no hardware UART so you cannot use the Serial Monitor
 > for debugging. Use the Pico's I²C interface to query module state instead.
+
+---
+
+## Command-line upload
+
+`firmware/attiny84/upload.sh` compiles the sketch and flashes it with
+`arduino-cli`, using the board settings from step 4 (the build is identical to
+the IDE's). It runs on macOS and Linux, including a Raspberry Pi (ATTinyCore's
+toolchain ships `aarch64` and `armhf` builds). Install `arduino-cli`
+(macOS: `brew install arduino-cli`; Linux:
+[installation guide](https://arduino.github.io/arduino-cli/latest/installation/)),
+then:
+
+```bash
+firmware/attiny84/upload.sh --setup          # once: installs ATTinyCore 1.5.7
+```
+
+`--setup` installs the pinned ATTinyCore version from
+`https://downloads.pyavrocd.io/package_debug_enabled_index.json` (the maintained
+1.5.3+ releases) without changing your arduino-cli or IDE settings.
+
+```bash
+firmware/attiny84/upload.sh                  # compile + upload with a USBasp
+firmware/attiny84/upload.sh --fuses          # new chip: set fuses, then upload
+firmware/attiny84/upload.sh --fuses-only     # same as Burn Bootloader
+firmware/attiny84/upload.sh --read-fuses     # check fuses (expect e2 / d5 / ff)
+firmware/attiny84/upload.sh --compile-only   # build to firmware/attiny84/build/
+firmware/attiny84/upload.sh --programmer arduinoasisp --port /dev/cu.usbmodemXXXX
+```
+
+Setting fuses erases flash but keeps EEPROM (the module's I2C address, speed
+and offset), since EESAVE stays set.
+
+On Linux, a USBasp needs a udev rule to be usable without `sudo`:
+
+```bash
+echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="16c0", ATTR{idProduct}=="05dc", MODE="0666"' | sudo tee /etc/udev/rules.d/99-usbasp.rules
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+Then unplug and replug the USBasp.
+
+> `Error: cannot set sck period; please check for usbasp firmware update` is
+> harmless with older USBasp firmware: avrdude falls back to the default clock
+> and programming still verifies.
 
 ---
 
@@ -247,7 +296,7 @@ to correct the fuse settings, then re-upload the sketch.
 
 ### EEPROM wiped after re-upload
 
-Check that `hfuse = 0xd7` (EEPROM retained). If it reads `0xdf` the EEPROM is
+Check that `hfuse = 0xd5` (EEPROM retained). If it reads `0xdd` the EEPROM is
 being erased on every upload. Re-run Burn Bootloader with **Save EEPROM →
 EEPROM retained** selected in the board settings.
 
@@ -258,8 +307,8 @@ EEPROM retained** selected in the board settings.
 | Fuse | Value | Meaning |
 |---|---|---|
 | lfuse | 0xe2 | 8 MHz internal oscillator, no clock divider |
-| hfuse | 0xd7 | EEPROM retained, RESET enabled, SPI enabled |
-| efuse | 0xff | BOD disabled |
+| hfuse | 0xd5 | EEPROM retained, BOD 2.7 V, RESET enabled, SPI enabled |
+| efuse | 0xff | Self-programming disabled (no bootloader) |
 
 > ⚠️ Never modify the `RSTDISBL` bit in hfuse. Setting it disables the RESET
 > pin and permanently prevents ISP programming.
