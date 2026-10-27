@@ -72,6 +72,8 @@ export function SetupPage() {
   const [lon, setLon] = useState('')
   const [locationSource, setLocationSource] = useState(null)
   const [maxConcurrent, setMaxConcurrent] = useState('')
+  const [refreshInterval, setRefreshInterval] = useState('')
+  const [refreshChoices, setRefreshChoices] = useState([])
   const [charPerRow, setCharPerRow] = useState('')
   const [moduleCount, setModuleCount] = useState(null)
   const [layoutRows, setLayoutRows] = useState([])
@@ -93,6 +95,10 @@ export function SetupPage() {
     }).catch(() => {})
     api.getMaxConcurrentModules().then(data => {
       setMaxConcurrent(String(data.max_concurrent ?? ''))
+    }).catch(() => {})
+    api.getRefreshInterval().then(data => {
+      setRefreshInterval(String(data.interval_min ?? ''))
+      setRefreshChoices(data.choices || [])
     }).catch(() => {})
     api.getLayout().then(data => {
       setCharPerRow(data.char_per_row > 0 ? String(data.char_per_row) : '')
@@ -173,6 +179,17 @@ export function SetupPage() {
     try {
       const r = await api.setMaxConcurrentModules(value)
       setStatus(r.ok ? 'Max concurrent modules saved.' : r.error || 'Error.')
+    } finally { setBusy(false) }
+  }
+
+  async function saveRefreshInterval(e) {
+    e.preventDefault()
+    const value = parseInt(refreshInterval, 10)
+    if (!value) return
+    setBusy(true)
+    try {
+      const r = await api.setRefreshInterval(value)
+      setStatus(r.ok ? 'Refresh interval saved.' : r.error || 'Error.')
     } finally { setBusy(false) }
   }
 
@@ -290,6 +307,27 @@ export function SetupPage() {
             <button class="btn" type="submit" disabled={busy || lat === '' || lon === ''}>SAVE LOCATION</button>
             <button class="btn" type="button" onClick={detectLocation} disabled={busy}>DETECT</button>
           </div>
+        </form>
+      </div>
+
+      <div class="display-card" style="margin-bottom:12px;">
+        <div class="field-label">Weather &amp; Sensor Refresh</div>
+        <form onSubmit={saveRefreshInterval}>
+          <select
+            value={refreshInterval}
+            onInput={e => setRefreshInterval(e.target.value)}
+            style="width:100%;margin-bottom:8px;"
+          >
+            {refreshChoices.map(m => (
+              <option key={m} value={String(m)}>
+                {m === 60 ? 'Every hour' : m === 1 ? 'Every minute' : `Every ${m} minutes`}
+              </option>
+            ))}
+          </select>
+          <div style="margin-bottom:10px;font-size:0.85em;opacity:0.7;">
+            Outdoor weather and the indoor sensor are read on the clock: every 15 minutes means :00, :15, :30 and :45. A reading more than 2 hours old shows as dashes.
+          </div>
+          <button class="btn" type="submit" disabled={busy || !refreshInterval}>SAVE</button>
         </form>
       </div>
 
