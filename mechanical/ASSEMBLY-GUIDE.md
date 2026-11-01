@@ -83,8 +83,8 @@ Pictures of each part are in [PRINT-GUIDE.md](PRINT-GUIDE.md#parts-list).
 | Socket button head screw M3x0.5 x 12 | 4 per display | Fasten the Pico Case to the Frame at its four corners, into the corner nuts (step 14). |
 | Socket button head screw M3x0.5 x 8 | 4 per display | Fasten the Pico PCB to the standoffs in the Pico Case (step 14). |
 | Hex thin nut grade A & B M3 | 4 per display | In the Pico Case standoffs, under the Pico PCB (step 14). |
-| Socket button head screw M3x0.5 x 20 | 2 per display | Hold the Pico Case Lid, at its top and bottom (step 14). |
-| Hex thin nut grade A & B M3 | 2 per display | In the Pico Case posts behind the lid screws (step 14). |
+| Socket button head screw M3x0.5 x 20 | 3 per display | Hold the Pico Case Lid, at its top, bottom and front (step 14). |
+| Hex thin nut grade A & B M3 | 3 per display | In the Pico Case posts behind the lid screws (step 14). |
 
 ---
 
@@ -396,9 +396,9 @@ doesn't touch the wheel.
 2. Drop the four **M3 nuts (3)** into the standoffs of the case (they sit inside, out of sight in the figure), set the **Pico PCB (4)**
    on them with the Pico W in its sockets, and fasten it with the four
    **M3×8 screws (5)**.
-3. Drop the two **M3 nuts (6)** into the posts at the top and bottom of the case (also out of sight), put
+3. Drop the three **M3 nuts (6)** into the slots in the top, bottom and front walls of the case, put
    on the **Pico Case Lid (7)**, with the "Open Flaps" lettering facing out, and fasten it
-   with the two **M3×20 screws (8)**.
+   with the three **M3×20 screws (8)**.
 
 ## Complete
 

@@ -61,12 +61,12 @@
   {
    "group": "pico-lid-screws",
    "name": "Socket button head screw M3x0.5 x 20",
-   "count": 2
+   "count": 3
   },
   {
    "group": "pico-lid-nuts",
    "name": "Hex thin nut grade A & B M3",
-   "count": 2
+   "count": 3
   }
  ]
 }

@@ -161,7 +161,7 @@ FASTENER_GROUPS = [
     dict(id="pico-pcb-nuts", stage="pico", kind="nut", size="M3", x=(15, 22.5),
          note="In the Pico Case standoffs, under the Pico PCB (step 14)."),
     dict(id="pico-lid-screws", stage="pico", kind="screw", size="M3", length=20, x=(10, None),
-         note="Hold the Pico Case Lid, at its top and bottom (step 14)."),
+         note="Hold the Pico Case Lid, at its top, bottom and front (step 14)."),
     dict(id="pico-lid-nuts", stage="pico", kind="nut", size="M3", x=(22.5, None),
          note="In the Pico Case posts behind the lid screws (step 14)."),
     dict(id="switch-screws", kind="screw", size="M2", length=12, note="Mount the micro limit switch on the Limit Switch Support (step 3)."),
@@ -977,7 +977,7 @@ def classify(p):
     c = (p["v"].min(0) + p["v"].max(0)) / 2
     if n.startswith("Board~IWs3") or (c[1] > 17 and c[0] < 15) or (c[1] > 20 and c[0] < 5):
         return "strip"
-    if c[0] > 18:
+    if c[0] > 15:
         return "pico_pcb"
     if c[0] < 0 and c[2] > 14:
         return "char_pcb"
