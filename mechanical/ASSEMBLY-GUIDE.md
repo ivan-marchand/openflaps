@@ -84,7 +84,7 @@ Pictures of each part are in [PRINT-GUIDE.md](PRINT-GUIDE.md#parts-list).
 | Socket button head screw M3x0.5 x 8 | 4 per display | Fasten the Pico PCB to the standoffs in the Pico Case (step 14). |
 | Hex thin nut grade A & B M3 | 4 per display | In the Pico Case standoffs, under the Pico PCB (step 14). |
 | Socket button head screw M3x0.5 x 20 | 3 per display | Hold the Pico Case Lid, at its top, bottom and front (step 14). |
-| Hex thin nut grade A & B M3 | 3 per display | In the Pico Case posts behind the lid screws (step 14). |
+| Hex thin nut grade A & B M3 | 3 per display | In the slots in the Pico Case walls, behind the lid screws (step 14). |
 
 ---
 

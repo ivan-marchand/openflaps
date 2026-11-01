@@ -163,7 +163,7 @@ FASTENER_GROUPS = [
     dict(id="pico-lid-screws", stage="pico", kind="screw", size="M3", length=20, x=(10, None),
          note="Hold the Pico Case Lid, at its top, bottom and front (step 14)."),
     dict(id="pico-lid-nuts", stage="pico", kind="nut", size="M3", x=(22.5, None),
-         note="In the Pico Case posts behind the lid screws (step 14)."),
+         note="In the slots in the Pico Case walls, behind the lid screws (step 14)."),
     dict(id="switch-screws", kind="screw", size="M2", length=12, note="Mount the micro limit switch on the Limit Switch Support (step 3)."),
     dict(id="switch-nuts", kind="nut", size="M2", x=(None, 0), note="In the hex pockets of the Limit Switch Support (step 3)."),
     dict(id="wheel-screws", kind="screw", size="M2", length=8, note="Fasten the Right Wheel to the Left Wheel (step 4)."),
