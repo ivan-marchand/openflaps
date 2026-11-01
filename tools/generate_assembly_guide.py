@@ -100,6 +100,9 @@ PRINTED = [
 NOT_IN_GUIDE = {"Gear - Stepper.stl", "Gear - Wheel.stl"}
 # 3MF bodies to ignore: the Rail is out of the design for now (its STL was removed).
 IGNORED_BODIES = {"Rail"}
+# Same, by the board tag EasyEDA ends a body's name with: the small board at the back of the Pico case,
+# hidden until the guide covers it.
+IGNORED_BOARD_TAGS = ("~Gjse",)
 FLAT_GEARS = {"Wheel 50", "Stepper 30"}  # STLs are laid flat; the 3MF says where they sit
 # 3MF body name -> PRINTED key (the CAD names are the key or the STL name without its prefix)
 PRINTED_ALIASES = {f.replace("Split Flap Character - ", "").replace(".stl", ""): k for k, f, *_ in PRINTED}
@@ -962,7 +965,7 @@ def read_assemblies(paths):
 def classify(p):
     """Bucket a 3MF body: 'printed', 'fastener', or a HARDWARE_PARTS group, by name and position."""
     n = p["name"]
-    if n in IGNORED_BODIES:
+    if n in IGNORED_BODIES or n.endswith(IGNORED_BOARD_TAGS):
         return "skip"  # deliberately out of the guide
     if n in PRINTED_ALIASES:
         return "printed"  # comes from mechanical/stl/ (or, for repeated parts, the 3MF copies)
@@ -977,7 +980,7 @@ def classify(p):
     c = (p["v"].min(0) + p["v"].max(0)) / 2
     if n.startswith("Board~IWs3") or (c[1] > 17 and c[0] < 15) or (c[1] > 20 and c[0] < 5):
         return "strip"
-    if c[0] > 15:
+    if c[0] > 18:
         return "pico_pcb"
     if c[0] < 0 and c[2] > 14:
         return "char_pcb"
