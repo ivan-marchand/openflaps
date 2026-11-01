@@ -2,10 +2,14 @@
 # Rule tuple: (month, nth_occurrence, weekday, hour)
 #   weekday: 0=Mon … 6=Sun
 #   nth_occurrence: 1=first, 2=second, -1=last
+#   hour: local wall-clock hour of the change, in the offset in effect *before*
+#         it (standard time for the start rule, DST for the end rule)
 # Zone tuple: (std_offset_s, dst_offset_s, dst_start_rule, dst_end_rule, display_name)
 #   dst_offset_s=None means no DST observed
 
 import time
+
+from reminders import DAY, civil_from_days, days_from_civil, days_in_month, to_ts, weekday
 
 # Zones sorted by std_offset_s (ascending). Order here is preserved for the API.
 ZONES = {
@@ -39,42 +43,34 @@ ZONES = {
     "Asia/Bangkok":                     (7*3600,   None,       None,          None,          "Bangkok, Jakarta"),
     "Asia/Shanghai":                    (8*3600,   None,       None,          None,          "China, Singapore, Perth"),
     "Asia/Tokyo":                       (9*3600,   None,       None,          None,          "Japan, Korea"),
-    "Australia/Adelaide":               (34200,    37800,      (10,1,6,2),   (4,1,6,2),     "Adelaide"),
-    "Australia/Sydney":                 (10*3600,  11*3600,    (10,1,6,2),   (4,1,6,2),     "Sydney, Melbourne"),
+    "Australia/Adelaide":               (34200,    37800,      (10,1,6,2),   (4,1,6,3),     "Adelaide"),
+    "Australia/Sydney":                 (10*3600,  11*3600,    (10,1,6,2),   (4,1,6,3),     "Sydney, Melbourne"),
     "Pacific/Noumea":                   (11*3600,  None,       None,          None,          "New Caledonia"),
     "Pacific/Auckland":                 (12*3600,  13*3600,    (9,-1,6,2),   (4,1,6,3),     "Auckland"),
     "Pacific/Apia":                     (13*3600,  None,       None,          None,          "Samoa"),
 }
 
 
-def _rule_to_timestamp(year, month, nth, weekday, hour):
-    """Return a UTC Unix timestamp approximating the nth occurrence of weekday
-    in month/year at the given hour. nth=-1 means last occurrence.
-    NOTE: hour is treated as a UTC hour (not local time), so the result may be
-    off by up to the zone's std offset near the actual DST transition. This is
-    acceptable for a clock display."""
-    # First day of month
-    t_first = time.mktime((year, month, 1, 0, 0, 0, 0, 0))
-    first_wd = time.localtime(t_first)[6]  # 0=Mon, 6=Sun
-
+def _transition_utc(year, rule, offset):
+    """UTC seconds (on reminders.to_ts()'s scale) of a DST rule in `year`.
+    The rule's hour is local wall-clock time in `offset`, the UTC offset in
+    effect just before the change."""
+    month, nth, wd, hour = rule
     if nth > 0:
-        days_ahead = (weekday - first_wd) % 7
-        day = 1 + days_ahead + (nth - 1) * 7
+        first = days_from_civil(year, month, 1)
+        day = first + (wd - weekday(first)) % 7 + (nth - 1) * 7
     else:
-        # Negative nth: count from end of month
-        next_month = month + 1 if month < 12 else 1
-        next_year  = year if month < 12 else year + 1
-        t_last = time.mktime((next_year, next_month, 1, 0, 0, 0, 0, 0)) - 86400
-        last_day = time.localtime(t_last)[2]
-        last_wd  = time.localtime(t_last)[6]
-        days_before = (last_wd - weekday) % 7
-        day = last_day - days_before + (nth + 1) * 7
-
-    return time.mktime((year, month, day, hour, 0, 0, 0, 0))
+        last = days_from_civil(year, month, days_in_month(year, month))
+        day = last - (weekday(last) - wd) % 7 + (nth + 1) * 7
+    return day * DAY + hour * 3600 - offset
 
 
-def get_offset(zone_name):
-    """Return the current UTC offset in seconds for the given zone name."""
+def get_offset(zone_name, now=None):
+    """Return the UTC offset in seconds for the given zone name.
+
+    `now` is the current UTC time as reminders.to_ts() seconds; it defaults to
+    the system clock (UTC on the Pico, set by NTP). Calendar maths avoids
+    time.mktime(), whose epoch and timezone handling differ between ports."""
     entry = ZONES.get(zone_name)
     if entry is None:
         entry = ZONES["UTC"]
@@ -84,12 +80,13 @@ def get_offset(zone_name):
     if dst_offset is None:
         return std_offset
 
-    now  = time.time()
-    # Use UTC year; may be wrong by 1 year during the last ~13h of Dec for UTC+ zones
-    year = time.localtime(now)[0]
+    if now is None:
+        now = to_ts(*time.gmtime()[:6])
+    # Local (standard time) year, so a UTC+ zone isn't a year behind on Jan 1
+    year = civil_from_days((now + std_offset) // DAY)[0]
 
-    start_ts = _rule_to_timestamp(year, dst_start[0], dst_start[1], dst_start[2], dst_start[3])
-    end_ts   = _rule_to_timestamp(year, dst_end[0],   dst_end[1],   dst_end[2],   dst_end[3])
+    start_ts = _transition_utc(year, dst_start, std_offset)
+    end_ts   = _transition_utc(year, dst_end, dst_offset)
 
     if start_ts < end_ts:
         # Northern hemisphere: DST between start and end

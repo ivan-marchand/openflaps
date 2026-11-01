@@ -97,7 +97,7 @@ already in `firmware/pico/` — so run `npm run build` first or the device gets 
 - `firmware/pico/reminders.py` — Pure reminder scheduling (calendar maths on local epoch seconds, `latest_occurrence()`, `next_occurrence()`, `active()`, `finished()`, `validate()`); host-tested in `firmware/pico/test/`
 - `firmware/pico/refresh.py` — Clock-aligned refresh schedule and 2 h expiry for weather/sensor readings (`slot()`, `Source`); host-tested in `firmware/pico/test/`
 - `firmware/pico/bme280.py` — BME280 indoor sensor driver (I2C1, GP2/GP3); pure compensation functions + `BME280(i2c).read()`; host-tested in `firmware/pico/test/`
-- `firmware/pico/tz.py` — Timezone table with DST rules (~35 zones), `get_offset()`, `zone_list()`
+- `firmware/pico/tz.py` — Timezone table with DST rules (~35 zones), `get_offset()`, `zone_list()`. Rule hours are local wall-clock time (in the offset before the change); transitions use `reminders.py`'s calendar maths, not `time.mktime()`; host-tested in `firmware/pico/test/`
 - `firmware/pico/deploy.sh` — Deploys all firmware files to Pico via `mpremote` (USB) or `POST /api/firmware/update` (`--ota [host]`)
 - `firmware/pico/index.html` — Built Preact SPA (served to browser)
 - `firmware/pico/setup.html` — AP provisioning page (served when no WiFi config)
@@ -528,7 +528,7 @@ All three are gitignored.
 
 ## Testing & Simulation
 
-- **Pico host unit tests:** `cd firmware/pico && python3 -m unittest discover -s test` — covers the pure `reminders.py` and `refresh.py` modules, the `bme280.py` driver and the `layout.py` sensor fields (CPython, no MicroPython needed); `app.py` itself stays manual.
+- **Pico host unit tests:** `cd firmware/pico && python3 -m unittest discover -s test` — covers the pure `reminders.py` and `refresh.py` modules, `tz.py`'s DST transitions, the `bme280.py` driver and the `layout.py` sensor fields (CPython, no MicroPython needed); `app.py` itself stays manual.
 - **ATtiny84 host unit tests:** `cd firmware/attiny84/test-host && python3 -m platformio test -e native`
   (characterization tests + 1 toolchain-harness check, PlatformIO `native`
   env + ArduinoFake + Unity). Covers the extracted headers
