@@ -18,9 +18,10 @@ function Tile({ char }) {
 
   return (
     <div class={`sfd-tile${flipping ? ' flipping' : ''}`}>
-      <div class="sfd-top"><span class="sfd-char">{display}</span></div>
+      <div class="sfd-top" />
       <div class="sfd-seam" />
       <div class="sfd-bottom" />
+      <span class="sfd-char">{display}</span>
     </div>
   )
 }
@@ -33,7 +34,7 @@ export function SplitFlapDisplay({ text = '    ', moduleCount = 4, charPerRow = 
     rows.push(chars.slice(i, i + rowWidth))
   }
   return (
-    <div class="sfd-grid">
+    <div class="sfd-grid" style={{ '--cols': Math.max(1, Math.min(rowWidth, chars.length)) }}>
       {rows.map((row, r) => (
         <div class="sfd-row" key={r}>
           {row.map((c, i) => <Tile key={i} char={c} />)}

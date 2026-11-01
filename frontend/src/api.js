@@ -23,6 +23,8 @@ export const api = {
   saveLocation: (lat, lon) => post('/api/setup/location', { lat, lon }),
   detectLocation: () => post('/api/location/detect'),
   getMaxConcurrentModules: () => fetch(BASE + '/api/max_concurrent_modules').then(r => r.json()),
+  getRefreshInterval: () => fetch(BASE + '/api/refresh_interval').then(r => r.json()),
+  setRefreshInterval: (minutes) => post('/api/setup/refresh_interval', { interval_min: minutes }),
   setMaxConcurrentModules: (maxConcurrent) => post('/api/setup/max_concurrent_modules', { max_concurrent: maxConcurrent }),
   getLayout: () => fetch(BASE + '/api/layout').then(r => r.json()),
   saveLayout: (charPerRow) => post('/api/setup/layout', { char_per_row: charPerRow }),

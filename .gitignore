@@ -14,6 +14,7 @@ firmware/pico/location_config.json
 firmware/pico/max_concurrent_modules_config.json
 firmware/pico/layout_config.json
 firmware/pico/reminders_config.json
+firmware/pico/refresh_config.json
 
 # MicroPython runtime files for POST /api/firmware/update
 firmware/pico/firmware_update.zip
@@ -33,3 +34,9 @@ mcp-server/.env
 mcp-server/data/
 mcp-server/.venv/
 *.egg-info/
+
+# Precompiled app.py, built by deploy.sh
+firmware/pico/app.mpy
+
+# mpy-cross venv bootstrapped by deploy.sh
+firmware/pico/.mpy-cross-venv/

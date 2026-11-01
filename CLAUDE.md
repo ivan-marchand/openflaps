@@ -74,6 +74,8 @@ already in `firmware/pico/` — so run `npm run build` first or the device gets 
 | `api.identifyModule(addr)` | `POST /api/modules/identify` |
 | `api.powerDownModule(addr)` | `POST /api/modules/power_down` |
 | `api.updateFirmware(zipFile)` | `POST /api/firmware/update` |
+| `api.getRefreshInterval()` | `GET /api/refresh_interval` |
+| `api.setRefreshInterval(minutes)` | `POST /api/setup/refresh_interval` |
 | `api.getMaxConcurrentModules()` | `GET /api/max_concurrent_modules` |
 | `api.setMaxConcurrentModules(maxConcurrent)` | `POST /api/setup/max_concurrent_modules` |
 | `api.getLayout()` | `GET /api/layout` |
@@ -89,9 +91,11 @@ already in `firmware/pico/` — so run `npm run build` first or the device gets 
 
 ## Key Files
 
-- `firmware/pico/main.py` — Main Pico controller (HTTP server, I2C master, display logic)
+- `firmware/pico/app.py` — Main Pico controller (HTTP server, I2C master, display logic). Shipped precompiled as `app.mpy` (see Deploying to Pico)
+- `firmware/pico/main.py` — Boot stub: just `import app`
 - `firmware/pico/layout.py` — Layout template engine: field registry, `parse_template()`, `render()`, `required_width()`, `uses_weather()`, `available()`, `field_catalog()` (see Display Modes below)
 - `firmware/pico/reminders.py` — Pure reminder scheduling (calendar maths on local epoch seconds, `latest_occurrence()`, `next_occurrence()`, `active()`, `finished()`, `validate()`); host-tested in `firmware/pico/test/`
+- `firmware/pico/refresh.py` — Clock-aligned refresh schedule and 2 h expiry for weather/sensor readings (`slot()`, `Source`); host-tested in `firmware/pico/test/`
 - `firmware/pico/bme280.py` — BME280 indoor sensor driver (I2C1, GP2/GP3); pure compensation functions + `BME280(i2c).read()`; host-tested in `firmware/pico/test/`
 - `firmware/pico/tz.py` — Timezone table with DST rules (~35 zones), `get_offset()`, `zone_list()`
 - `firmware/pico/deploy.sh` — Deploys all firmware files to Pico via `mpremote` (USB) or `POST /api/firmware/update` (`--ota [host]`)
@@ -106,11 +110,12 @@ Config is stored in JSON files on Pico flash — all are gitignored:
 - `api_config.json` — `{"key": "sk-ant-..."}` — Claude API key
 - `timezone_config.json` — `{"zone": "America/New_York"}` — IANA timezone name
 - `location_config.json` — `{"lat": 51.5074, "lon": -0.1278}` — weather location in decimal degrees (lat in [-90, 90], lon in [-180, 180]), set via SetupPage's "Weather Location" card (`POST /api/setup/location`). Deliberately not hardcoded in the repo. When absent, `get_weather()` falls back to an approximate location from the public IP (`detect_location()`, ip-api.com's free plain-HTTP endpoint), looked up once per boot and kept in memory only (`detected_location`, never saved; retried on the next weather refresh if it fails — weather fields show dashes meanwhile). `GET /api/location` returns the effective `lat`/`lon` plus `source` (`"saved"`, `"detected"` or `null`). The card's DETECT button calls `POST /api/location/detect`, which returns a fresh lookup without saving it, so the user reviews it before pressing Save. Saving a new location resets `last_weather_update` so the next tick refetches.
+- `refresh_config.json` — `{"interval_min": 15}` — minutes between outdoor weather and indoor sensor reads, one of `refresh.INTERVALS` (1/5/10/15/30/60, default 15). Set via SetupPage's "Weather & Sensor Refresh" card (`POST /api/setup/refresh_interval`; `GET /api/refresh_interval` also returns the `choices`). Saving it re-reads both sources on the next tick.
 - `max_concurrent_modules_config.json` — `{"max_concurrent": 4}` — max modules allowed to move simultaneously. Renamed from `energy_config.json`; `load_max_concurrent()` migrates an existing device's old file to the new name on first boot after the rename, then deletes the old one.
 - `layout_config.json` — `{"char_per_row": -1, "layouts": [{"name": "Clock", "template": "{hours:02}{minutes:02}", "align": "left"}], "active_layout": "Clock"}` — `char_per_row`: modules per physical row (`-1` = single row spanning every detected module); `layouts`: the named template catalog (always ≥1 entry; `align` is `left`/`center`/`right`, and a missing or unrecognized value means `left`); `active_layout`: which one is currently live (always names an entry in `layouts`)
 - `reminders_config.json` — `{"reminders": [{"id": "r3", "text": "DR APPT 10AM", "repeat": "once", "start_date": "2026-09-30", "time": "09:30", "duration": 45, "expires": null, "dismissed": null}], "next_id": 4}` — scheduled reminders (max 20). `repeat` is `once`/`daily`/`weekly` (+ `weekdays`, 0 = Mon)/`monthly`/`yearly`; times are device-local; `duration` minutes or `null` (until dismissed / next occurrence / expiry); `expires` `YYYY-MM-DD HH:MM` or `null`; `dismissed` is Pico-internal (the dismissed occurrence's start). Finished reminders (expired, or a `once` that ended/was dismissed) are deleted automatically.
 
-Constants in `main.py`:
+Constants in `app.py`:
 - `BASE_ADDR = 0x11` — First I2C device address (0x10 is reserved for pairing mode). Modules are wired right-to-left, so `BASE_ADDR` is the rightmost character and address increases leftward.
 - `AP_SSID = "OpenFlap-Setup"`, `AP_PASSWORD = "openflap1"` — AP mode credentials
 - `MDNS_HOSTNAME = "openflaps"` — device is reachable at `http://openflaps.local/` once on WiFi
@@ -133,7 +138,7 @@ the built-in responder already held) rather than just being redundant.
 
 ## Concurrency (`mutation_lock`)
 
-`main.py`'s HTTP server runs on `uasyncio`, so multiple requests (plus the
+`app.py`'s HTTP server runs on `uasyncio`, so multiple requests (plus the
 background `tick_loop`) interleave at every `await`. A single module-level
 `mutation_lock` (`asyncio.Lock`) serializes the parts that can't tolerate that.
 Any new route or background task must preserve these invariants:
@@ -169,7 +174,7 @@ Full rationale: `docs/superpowers/specs/2026-09-17-pico-async-concurrency-design
 
 | Mode constant | Value | Behaviour |
 |---|---|---|
-| `MODE_LAYOUT` | `"layout"` | Renders the active named layout's template, auto-updating (time/date fields every minute, weather on `WEATHER_UPDATE_INTERVAL`) |
+| `MODE_LAYOUT` | `"layout"` | Renders the active named layout's template, auto-updating (time/date fields every minute, weather/sensor on the clock-aligned refresh interval) |
 | `MODE_TEXT` | `"text"` | Shows user text or Claude response, static |
 | `MODE_REMINDER` | `"reminder"` | A scheduled reminder is showing (set by `evaluate_reminders()`); restores the previous mode/text when it ends |
 
@@ -177,7 +182,7 @@ Full rationale: `docs/superpowers/specs/2026-09-17-pico-async-concurrency-design
 user-configurable template system. A **layout** is a `{name, template}`
 pair (SetupPage's "Layouts" card manages the catalog; ControlPage's
 dropdown picks which one is live — see `layout_config.json` above).
-`main.py`'s `render_active_layout()` computes the current
+`app.py`'s `render_active_layout()` computes the current
 timezone-adjusted `time.localtime()` tuple and the last-known outdoor
 weather dict (`get_weather()`, one open-meteo `current=` request), then calls `layout.render()` to produce the display string
 and per-character energize mask; `tick()` calls it whenever the minute
@@ -230,20 +235,35 @@ and the result is written back once, so no saved layout stops loading.
 The weather fields (`temperature_*` through `condition`) all come from the
 same `get_weather()` fetch, which returns a dict of raw readings
 (`temp_c`, `humidity`, `code`, `wind_kmh`, `wind_deg`); each field derives
-its value from that dict. open-meteo only refreshes its `current` block
-every 15 minutes, so `WEATHER_UPDATE_INTERVAL` (60 s) polls more often than
-the data changes.
+its value from that dict.
+
+**Refresh schedule and expiry** (`firmware/pico/refresh.py`). Weather and the
+sensor are read on the clock, not every N seconds from the last read: local
+minutes are split into slots of `refresh_interval` minutes (`refresh_config.json`),
+all dividing an hour, so 15 means :00, :15, :30 and :45 in device-local time.
+Each source (`weather_src`, `sensor_src`, a `refresh.Source`) is read once per
+slot, only while the active template uses it. A failed read retries once a
+minute until one succeeds in that slot. The first read happens as soon as a
+layout needs the source, so nothing waits a whole interval for its first value;
+saving a new location (weather) or interval (both) forces a read on the next
+tick. Between reads the measurement fields hold still while the time fields keep
+updating every minute. A reading older than `refresh.MAX_AGE_MS` (2 h, measured
+with `time.ticks_ms()`/`ticks_diff` so an NTP clock jump can't change its age)
+is dropped, and its fields render as dashes. `tick()` re-renders as soon as
+that happens rather than waiting for the next slot. open-meteo publishes on the
+quarter hour, so a fetch right at :15 may still return the previous value for one
+more interval; that's accepted rather than adding an offset.
 
 **Indoor sensor.** The `indoor_temp_f`/`indoor_temp_c`/`indoor_humidity`/
 `pressure_hpa` fields come from a BME280 on I2C1 (GP2 SDA / GP3 SCL,
 physical pins 4/5), address `0x76` or `0x77`, detected once at boot (not
-retried) and read every `SENSOR_UPDATE_INTERVAL` (60 s), but only when the
+retried) and read on the refresh schedule above, but only when the
 active template actually uses a sensor field. The read happens outside
 `mutation_lock` since I2C1 is a separate bus from the module chain on I2C0.
 If no sensor was detected, or a reading has never succeeded, every sensor
 field renders as dashes the same way weather fields do; a failed/implausible
-read afterward just keeps showing the last good values instead of reverting
-to dashes.
+read afterward keeps showing the last good values until they are 2 h old (see
+the refresh schedule above).
 
 The sensor is optional and auto-detected: nothing is configured. Whether it was
 found at boot is reported as `temp_sensor_present` by `GET /api/state` and
@@ -252,7 +272,7 @@ found at boot is reported as `temp_sensor_present` by `GET /api/state` and
 (`layout.available(tokens, layout_sources())`), and ControlPage's dropdown
 hides those layouts. That's display-only filtering, like `required_width`:
 saving such a layout is still allowed, and one that is already active keeps
-rendering dashes. `layout_sources()` in `main.py` is the single place
+rendering dashes. `layout_sources()` in `app.py` is the single place
 that decides which field sources exist on this device (`time`, `weather`, plus
 `sensor` when detected). A future sensor gets its own `source` and its own
 `*_present` flag.
@@ -280,11 +300,11 @@ omitted); `GET /api/layouts` returns it per layout, and ControlPage's
 dropdown hides any layout whose `required_width` exceeds the detected
 `module_count` — display-only filtering, not enforced at save time.
 
-If the outdoor weather has never been successfully fetched, every
-weather field renders as dashes filling its width (or `"---"` if no
-width given) instead of blocking the rest of the template; once a
-reading succeeds, a later failed refetch just keeps showing the last
-known values rather than reverting to dashes. A single reading the API
+If the outdoor weather has never been successfully fetched, or the last
+good reading is more than 2 h old, every weather field renders as dashes
+filling its width (or `"---"` if no width given) instead of blocking the rest
+of the template; a later failed refetch keeps showing the last known values
+until they reach that age. A single reading the API
 omits, or a weather code with no text mapping, renders as dashes the same
 way.
 
@@ -371,6 +391,26 @@ A fresh module (`EEPROM_I2C_ADDRESS` unset, i.e. `0xFF`) does **not** join the I
 
 `deploy.sh` supports two transports — USB (default) and WiFi/OTA:
 
+**Precompiled app.** The controller code lives in `app.py` but ships as
+bytecode, `app.mpy`; the device's `main.py` is a one-line `import app` stub.
+Compiling ~90 KB of source on the Pico at boot exhausts its heap
+(`MemoryError` before any code runs, so the device never reaches WiFi); loading
+the ~31 KB `.mpy` doesn't. Both deploy modes first build `app.mpy` (gitignored)
+with `mpy-cross`, which must emit the `.mpy` format of the device's MicroPython.
+`deploy.sh` pins it (`MPY_CROSS_VERSION`, currently `1.29.0.post2`) and on
+first run installs it into its own gitignored venv,
+`firmware/pico/.mpy-cross-venv/` (only `python3` needed; reinstalled when the
+pin changes). `MPY_CROSS=/path/to/mpy-cross` overrides it. USB deploys read
+the Pico's MicroPython version and `.mpy` format before uploading anything:
+they stop if the format differs from what `mpy-cross` emits, or if MicroPython
+is older than 1.25 (mDNS, see above), and only warn if the version merely
+differs from the pin. OTA deploys can't check the device first, so after
+upgrading the Pico's MicroPython, bump `MPY_CROSS_VERSION` and deploy over USB
+once. Never upload `app.py` to
+the device: it would be imported instead of `app.mpy` and hit the same
+`MemoryError`. To see a boot traceback, plug in USB and run
+`mpremote connect auto exec "import main"`.
+
 ```bash
 cd firmware/pico
 ./deploy.sh                  # USB, via mpremote
@@ -378,9 +418,9 @@ cd firmware/pico
 ```
 
 - **USB** finds the Pico on `/dev/cu.usbmodem*` (macOS) or `/dev/ttyACM*` (Linux), uploads
-  `main.py`, `tz.py`, `layout.py`, `reminders.py`, `bme280.py`, `index.html`, `favicon.svg`, `setup.html`,
+  `main.py`, `app.mpy`, `tz.py`, `layout.py`, `reminders.py`, `bme280.py`, `refresh.py`, `index.html`, `favicon.svg`, `setup.html`,
   `assets/index.js`, `assets/index.css` via `mpremote`, then reboots. Requires `mpremote` (`pip install mpremote`).
-- **`--ota [host]`** (host defaults to `openflaps.local` via mDNS) zips those same ten
+- **`--ota [host]`** (host defaults to `openflaps.local` via mDNS) zips those same twelve
   files (from `firmware/pico/`, so entry names match what the device expects) plus a
   generated `manifest.json` listing them, and POSTs the zip
   to `http://<host>/api/firmware/update` with `curl`; the Pico streams it straight to flash,
@@ -390,8 +430,9 @@ cd firmware/pico
 
   ```bash
   cd firmware/pico
-  echo '["main.py","tz.py","layout.py","reminders.py","bme280.py","index.html","favicon.svg","setup.html","assets/index.js","assets/index.css"]' > manifest.json
-  zip -0 -r update.zip main.py tz.py layout.py reminders.py bme280.py index.html favicon.svg setup.html assets/index.js assets/index.css manifest.json
+  mpy-cross -o app.mpy app.py
+  echo '["main.py","app.mpy","tz.py","layout.py","reminders.py","bme280.py","refresh.py","index.html","favicon.svg","setup.html","assets/index.js","assets/index.css"]' > manifest.json
+  zip -0 -r update.zip main.py app.mpy tz.py layout.py reminders.py bme280.py refresh.py index.html favicon.svg setup.html assets/index.js assets/index.css manifest.json
   rm manifest.json
   curl -X POST -H "Content-Type: application/zip" --data-binary @update.zip http://<host>/api/firmware/update
   ```
@@ -401,8 +442,8 @@ cd firmware/pico
 ### `POST /api/firmware/update` (the OTA endpoint itself)
 
 - The zip must contain a `manifest.json` entry: a JSON array of the file paths in that
-  update, e.g. `["main.py", "tz.py", ..., "assets/index.js"]`. `main.py` must be one of
-  them — the update is rejected otherwise, since a device that boots without it is bricked
+  update, e.g. `["main.py", "tz.py", ..., "assets/index.js"]`. `main.py` and `app.mpy` must
+  both be in it — the update is rejected otherwise, since a device that boots without either is bricked
   until re-flashed over USB. Every path the manifest lists must also actually be present as
   an entry in the zip, or the whole update is rejected before anything is written.
 - Only files named in the manifest are ever written — this is also the path-traversal
@@ -425,8 +466,8 @@ cd firmware/pico
   depending on uptime/fragmentation in testing), even with every other
   buffer in the unpack path already minimized. Stored entries skip
   `deflate.DeflateIO` entirely, so there's no large allocation at all —
-  worth the bigger upload (this file set is ~165 KB stored vs. ~48 KB
-  deflated, still well under `FIRMWARE_UPDATE_MAX_BYTES`) for updates that
+  worth the bigger upload (this file set is ~130 KB stored, well under
+  `FIRMWARE_UPDATE_MAX_BYTES`) for updates that
   work deterministically instead of only when the heap happens to be
   unfragmented enough. `deflate` decoding is still fully supported server-side
   for anyone packaging a zip a different way, just not exercised by this
@@ -487,7 +528,7 @@ All three are gitignored.
 
 ## Testing & Simulation
 
-- **Pico host unit tests:** `cd firmware/pico && python3 -m unittest discover -s test` — covers the pure `reminders.py` module, the `bme280.py` driver and the `layout.py` sensor fields (CPython, no MicroPython needed); `main.py` itself stays manual.
+- **Pico host unit tests:** `cd firmware/pico && python3 -m unittest discover -s test` — covers the pure `reminders.py` and `refresh.py` modules, the `bme280.py` driver and the `layout.py` sensor fields (CPython, no MicroPython needed); `app.py` itself stays manual.
 - **ATtiny84 host unit tests:** `cd firmware/attiny84/test-host && python3 -m platformio test -e native`
   (characterization tests + 1 toolchain-harness check, PlatformIO `native`
   env + ArduinoFake + Unity). Covers the extracted headers

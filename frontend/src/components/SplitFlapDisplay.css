@@ -1,21 +1,29 @@
 .sfd-grid {
+  /* Tiles size themselves from the grid's width (cqw) and the row's tile
+     count (--cols, set by the component), so 4..16+ characters all fit
+     without the glyphs overflowing a squeezed tile. */
+  container-type: inline-size;
+  --gap: clamp(2px, 0.8cqw, 6px);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--gap);
   padding: 16px 0;
 }
 
 .sfd-row {
   display: flex;
-  gap: 6px;
+  gap: var(--gap);
   justify-content: center;
 }
 
 .sfd-tile {
-  width: 72px;
-  height: 96px;
+  /* Capped at the original 72x96 look; shrinks once a row needs more room. */
+  container-type: inline-size;
+  flex: none;
+  width: min(72px, (100cqw - (var(--cols) - 1) * var(--gap)) / var(--cols));
+  aspect-ratio: 3 / 4;
   background: #1c1c1c;
-  border-radius: 6px;
+  border-radius: 8% / 6%;
   box-shadow: 0 4px 12px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05);
   display: flex;
   flex-direction: column;
@@ -25,36 +33,39 @@
 
 .sfd-top {
   flex: 1;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
   background: #242424;
-  padding-bottom: 4px;
 }
 
 .sfd-bottom {
   flex: 1;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
   background: #1a1a1a;
-  padding-top: 4px;
 }
 
+/* Drawn over the character, like the gap between a real flap's two halves. */
 .sfd-seam {
   height: 2px;
   background: #000;
   box-shadow: 0 1px 3px rgba(0,0,0,0.8);
   flex-shrink: 0;
+  position: relative;
+  z-index: 1;
 }
 
+/* Centered over the whole tile, so the seam crosses the middle of the glyph. */
 .sfd-char {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   font-family: 'Courier New', Courier, monospace;
-  font-size: 52px;
+  /* cqw here is the tile's width. Courier's 0.6em advance keeps even M/W
+     inside the tile at this size. */
+  font-size: 125cqw;
   font-weight: 700;
   color: #ffffff;
   line-height: 1;
-  text-shadow: 0 0 12px rgba(255,255,255,0.3);
+  text-shadow: 0 0 16cqw rgba(255,255,255,0.3);
   user-select: none;
 }
 
