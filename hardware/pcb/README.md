@@ -12,8 +12,10 @@ for reading here. Part numbers are LCSC's.
 
 ## Ordering
 
-Upload the Gerber zip as-is to the fab; see EasyEDA's
-[How to order PCB](https://prodocs.easyeda.com/en/pcb/order-order-pcb/index.html).
+Upload the Gerber zip as-is to any PCB fab (JLCPCB, PCBWay, OSH Park, …); no design software
+is needed. All three are 2-layer boards. The BOMs use LCSC part
+numbers, which JLCPCB's assembly service takes directly; with other fabs, look the parts up by
+their manufacturer part numbers, also in the BOMs.
 
 - **Controller** uses surface-mount parts (SOIC-14 ATtiny84, SOP-16 ULN2003, 0603 resistor,
   SMD capacitors). For fab assembly, upload the BOM and the pick-and-place file
