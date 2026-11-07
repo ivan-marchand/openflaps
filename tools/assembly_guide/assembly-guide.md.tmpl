@@ -268,8 +268,9 @@ miscalibrate.
 4. Put a **Front Connector Peg (2)** on each of the four corners of the Lid, and fasten each
    with an **{{SIZE:corner-screws}} screw (3)** through it, all the way into the nut at the back.
 
-> The character that will sit next to the Pico case (Part 3) gets **no Front Connector Pegs**,
-> and its corner nuts stay empty: the Pico case is fixed to it directly.
+> The character that will sit next to the Pico case (Part 3) gets **no Front Connector Pegs**
+> and no corner screws: its corner nuts go in as usual, but they take the Pico case's screws
+> instead (step 14).
 
 The Front Connector Pegs stand out from the +X face: they plug into the matching hex
 pockets on the −X face of the next character, or of the Pico case.
@@ -347,6 +348,17 @@ per character and gives the chain power (the 5V connector) and the I²C bus.
 
 The address of each character is assigned from the Pico afterwards (long-press the
 module button, see CLAUDE.md, *Physical Button*).
+
+## More than four characters
+
+A longer display is several blocks of four, joined end to end the same way as the characters
+within a block (steps 11 and 12). Only the block at the +X end takes the Pico case.
+
+- **I²C** runs from block to block through the Backboard PCBs: each block's Backboard plugs
+  into the next one's, so only the first block is cabled to the Pico PCB.
+- **Power** does not: give each block's Backboard its own JST XH power cable from one of the
+  Pico PCB's 5V outputs (it has eight). Feeding every block through the chain would lose too
+  much power over many characters.
 
 ---
 
