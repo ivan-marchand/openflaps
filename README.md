@@ -87,8 +87,9 @@ wheel gives it a home position.
 1. [Print the parts](mechanical/PRINT-GUIDE.md); the flaps come ready to print in
    [`mechanical/stl/flaps/`](mechanical/stl/flaps/)
 2. [Order the PCBs](hardware/pcb/)
-3. [Assemble the characters, chain them, and add the Pico case](mechanical/ASSEMBLY-GUIDE.md)
-4. [Flash the ATtiny84 firmware](firmware/attiny84/INSTALL-attiny84.md) on each Controller PCB
+3. [Flash the ATtiny84 firmware](firmware/attiny84/INSTALL-attiny84.md) on each Controller PCB,
+   before it goes into its character
+4. [Assemble the characters, chain them, and add the Pico case](mechanical/ASSEMBLY-GUIDE.md)
 5. [Set up the Pico W](firmware/pico/INSTALL-pico.md)
 6. Power on, open `http://openflaps.local/` (or `http://<pico-ip>/`), and pair each character
    from the Modules page

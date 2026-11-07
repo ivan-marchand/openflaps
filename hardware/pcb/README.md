@@ -24,4 +24,5 @@ Upload the Gerber zip as-is to the fab; see EasyEDA's
   level shifter board with a 6-pin header on each side, e.g.
   [this pack of 10 on Amazon](https://www.amazon.com/dp/B08C9PFVGP) (VKLSVAN). The Pico W
   sits in the two 20-pin female headers.
-- The ATtiny84 on each Controller is flashed afterwards; see the [assembly guide](../../mechanical/ASSEMBLY-GUIDE.md#then).
+- Flash the ATtiny84 on each Controller before the board goes into its character, through the
+  ICSP header; see [INSTALL-attiny84.md](../../firmware/attiny84/INSTALL-attiny84.md).

@@ -255,13 +255,16 @@ the 50-tooth gear on the wheel; the axes are 40 mm apart
 
 ![Character PCB](images/07-pcb.png)
 
-1. Cut the switch's cable to length, then crimp a 2x1 2.54 mm header onto its two ends.
+1. Flash the ATtiny84 firmware on the **Character PCB (1)** first, through its 6-pin ICSP header,
+   following [INSTALL-attiny84.md](../firmware/attiny84/INSTALL-attiny84.md). Do it now, before the
+   board goes into the Frame.
+2. Cut the switch's cable to length, then crimp a 2x1 2.54 mm header onto its two ends.
 
 ![Switch cable](images/08-cable.png)
 
-2. Plug the **micro limit switch (2)**'s connector and the **motor (1)**'s five-wire plug
+3. Plug the **micro limit switch (2)**'s connector and the **motor (1)**'s five-wire plug
    into the **Character PCB (1)**'s headers.
-3. Slide the PCB into the pocket at the top of the Frame. Run both cables, the motor's
+4. Slide the PCB into the pocket at the top of the Frame. Run both cables, the motor's
    and the switch's, under the bar next to the motor and up along the side wall to the
    PCB, so they stay clear of the gears.
 
@@ -446,12 +449,10 @@ doesn't touch the wheel.
 
 ## Then
 
-1. Flash the ATtiny84 on each character (Arduino IDE, ATTinyCore 1.5.2).
-2. Deploy the Pico firmware (`firmware/pico/deploy.sh`).
-3. Pair each character and calibrate its offset from the *Modules* page.
+1. Deploy the Pico firmware (`firmware/pico/deploy.sh`).
+2. Pair each character and calibrate its offset from the *Modules* page.
 
 ## Tips
 
 - Sand gear teeth lightly if they bind (400-grit).
 - If flaps don't clip on easily, check your extrusion multiplier; PLA shrinkage varies.
-- Adjust the limit switch before flashing firmware, not after.
