@@ -370,8 +370,8 @@ per character and gives the chain power (the 5V connector) and the I²C bus.
 |---|---|
 | ![Front](images/15a-chain-front.png) | ![Back](images/15b-chain-back.png) |
 
-The address of each character is assigned from the Pico afterwards (long-press the
-module button, see CLAUDE.md, *Physical Button*).
+The address of each character is assigned from the Pico afterwards, right to left (see *Then*,
+at the end of this guide).
 
 ## More than four characters
 
@@ -457,7 +457,11 @@ doesn't touch the wheel.
 ## Then
 
 1. Deploy the Pico firmware (`firmware/pico/deploy.sh`).
-2. Pair each character and calibrate its offset from the *Modules* page.
+2. Pair the characters **right to left** as seen from the front, starting with the one next to
+   the Pico case: long-press a character's button (3 s) to put it in pairing mode, assign it the
+   next address from the *Modules* page, then move on to the character to its left. The
+   firmware writes text from the lowest address at the right, so pairing in another order
+   scrambles it. Then calibrate each one's offset from the same page.
 
 ## Tips
 
