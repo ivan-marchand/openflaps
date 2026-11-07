@@ -81,7 +81,7 @@ Pictures of each part are in [PRINT-GUIDE.md](PRINT-GUIDE.md#parts-list).
 | Power cable, Pico PCB to Backboard | 1 per block of 4 | 2 wires, JST XH connector at each end. |
 | I²C cable, Pico PCB to Backboard | 1 per display | 2 wires, 2.54 mm pitch connector at each end. |
 | Socket button head screw M3x0.5 x 8 | 4 per display | Fasten the Pico PCB to the standoffs in the Pico Case (step 14). |
-| Socket button head screw M3x0.5 x 12 | 4 per display | Fasten the Pico Case to the Frame at its four corners, into the corner nuts (step 14). |
+| Socket button head screw M3x0.5 x 20 | 4 per display | Fasten the Pico Case to the Frame at its four corners, into the corner nuts (step 14). |
 | Hex thin nut grade A & B M3 | 4 per display | In the Pico Case standoffs, under the Pico PCB (step 14). |
 | Socket button head screw M3x0.5 x 20 | 3 per display | Hold the Pico Case Lid, at its top, bottom and front (step 14). |
 | Hex thin nut grade A & B M3 | 3 per display | In the slots in the Pico Case walls, behind the lid screws (step 14). |
@@ -401,7 +401,7 @@ doesn't touch the wheel.
 | ![Parts](images/photos/11a-pico-case-parts.jpg) | ![Pico PCB screwed in](images/photos/11b-pico-pcb-in-case.jpg) |
 
 2. Set the case on the Lid of the first character and fasten it at the four corners with the
-   **M3×12 screws (2)**, from inside the case, into the corner nuts in the Frame.
+   **M3×20 screws (2)**, from inside the case, into the corner nuts in the Frame.
 
 **From a real build:**
 
