@@ -23,6 +23,9 @@ ATtiny84 board and a 28BYJ-48 stepper motor that flips a wheel of 45 printed fla
 - **MCP server**: let Claude (desktop, phone or Claude Code) drive the display from a chat,
   see [mcp-server/](mcp-server/)
 - **Expandable**: characters come in blocks of four and chain together
+- **[Live simulator](https://cdn.jsdelivr.net/gh/ivan-marchand/openflaps@gh-actions/firmware/attiny84/sim/web/index.html)**:
+  try one character module in your browser, running the real ATtiny84 firmware logic, no
+  hardware needed
 
 ---
 
