@@ -157,13 +157,15 @@ SAMPLE_FLAPS = [(175.0, (-0.2, -21.762, 12.994)), (355.0, (-0.2, -23.659, -7.417
 FASTENER_RE = re.compile(r"\b(screw|bolt|nut|washer)\b", re.I)
 FASTENER_COLORS = {"screw": (45, 45, 55), "bolt": (45, 45, 55), "nut": (230, 170, 40), "washer": (190, 190, 200)}
 FASTENER_GROUPS = [
-    dict(id="pico-corner-screws", stage="pico", kind="screw", size="M3", length=12, x=(10, None),
-         note="Fasten the Pico Case to the Frame at its four corners, into the corner nuts (step 14)."),
     dict(id="pico-pcb-screws", stage="pico", kind="screw", size="M3", length=8, x=(10, None),
          note="Fasten the Pico PCB to the standoffs in the Pico Case (step 14)."),
+    # the case and lid screws can be the same size, so they're told apart by position: the case
+    # screws sit near the Frame (centre ~25 mm out from its middle), the lid screws ~44 mm out
+    dict(id="pico-corner-screws", stage="pico", kind="screw", size="M3", x=(10, 35),
+         note="Fasten the Pico Case to the Frame at its four corners, into the corner nuts (step 14)."),
     dict(id="pico-pcb-nuts", stage="pico", kind="nut", size="M3", x=(15, 22.5),
          note="In the Pico Case standoffs, under the Pico PCB (step 14)."),
-    dict(id="pico-lid-screws", stage="pico", kind="screw", size="M3", length=20, x=(10, None),
+    dict(id="pico-lid-screws", stage="pico", kind="screw", size="M3", x=(35, None),
          note="Hold the Pico Case Lid, at its top, bottom and front (step 14)."),
     dict(id="pico-lid-nuts", stage="pico", kind="nut", size="M3", x=(22.5, None),
          note="In the slots in the Pico Case walls, behind the lid screws (step 14)."),

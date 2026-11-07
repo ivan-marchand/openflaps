@@ -78,8 +78,10 @@ Pictures of each part are in [PRINT-GUIDE.md](PRINT-GUIDE.md#parts-list).
 | Backboard PCB | 1 per set of 4 | 138 mm long = 4 × 34.5 mm. Gerbers and BOM: [`hardware/pcb/daisy-chain/`](../hardware/pcb/daisy-chain/). |
 | Pico PCB with Pico W | 1 per display | Pico W on 2.54 mm female headers; DC barrel jack for power. Gerbers and BOM: [`hardware/pcb/pico-controller/`](../hardware/pcb/pico-controller/). |
 | I²C logic level converter | 1 per display | Plugs into the Pico PCB: a 4-channel 3.3 V ↔ 5 V bi-directional I²C level shifter module, e.g. [this one](https://www.amazon.com/dp/B08C9PFVGP). |
-| Socket button head screw M3x0.5 x 12 | 4 per display | Fasten the Pico Case to the Frame at its four corners, into the corner nuts (step 14). |
+| Power cable, Pico PCB to Backboard | 1 per block of 4 | 2 wires, JST XH connector at each end. |
+| I²C cable, Pico PCB to Backboard | 1 per display | 2 wires, 2.54 mm pitch connector at each end. |
 | Socket button head screw M3x0.5 x 8 | 4 per display | Fasten the Pico PCB to the standoffs in the Pico Case (step 14). |
+| Socket button head screw M3x0.5 x 12 | 4 per display | Fasten the Pico Case to the Frame at its four corners, into the corner nuts (step 14). |
 | Hex thin nut grade A & B M3 | 4 per display | In the Pico Case standoffs, under the Pico PCB (step 14). |
 | Socket button head screw M3x0.5 x 20 | 3 per display | Hold the Pico Case Lid, at its top, bottom and front (step 14). |
 | Hex thin nut grade A & B M3 | 3 per display | In the slots in the Pico Case walls, behind the lid screws (step 14). |
@@ -407,9 +409,11 @@ doesn't touch the wheel.
 |---|---|---|
 | ![Case and first character](images/photos/11c-case-and-first-character.jpg) | ![Case on the first character](images/photos/11e-case-on-first-character.jpg) | ![On the block of four](images/photos/11f-case-on-block-of-four.jpg) |
 
-3. Connect the Pico PCB to the Backboard PCB at the back of the display: a two-wire power
-   cable from one of the Pico PCB's 5V outputs to the Backboard's **5V** connector, and the
-   I²C cable from the Pico PCB's I²C header to the Backboard's **I2CIN** header.
+3. Connect the Pico PCB to the Backboard PCB at the back of the display with two cables:
+   - **power:** a 2-wire cable with **JST XH** connectors, from one of the Pico PCB's 5V
+     outputs to the Backboard's **5V** connector;
+   - **I²C:** a 2-wire cable with **2.54 mm pitch** connectors, from the Pico PCB's I²C header
+     to the Backboard's **I2CIN** header.
 
 **From a real build:**
 

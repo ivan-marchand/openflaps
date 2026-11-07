@@ -44,13 +44,13 @@
  "four": [],
  "pico": [
   {
-   "group": "pico-corner-screws",
-   "name": "Socket button head screw M3x0.5 x 12",
+   "group": "pico-pcb-screws",
+   "name": "Socket button head screw M3x0.5 x 8",
    "count": 4
   },
   {
-   "group": "pico-pcb-screws",
-   "name": "Socket button head screw M3x0.5 x 8",
+   "group": "pico-corner-screws",
+   "name": "Socket button head screw M3x0.5 x 12",
    "count": 4
   },
   {
