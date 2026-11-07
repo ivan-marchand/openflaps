@@ -6,8 +6,8 @@ logic (`../split_flap_display_async/split_flap_controller.h` and
 
 CI builds this simulator and runs `test_smoke.mjs` against it on every PR
 touching this directory (`.github/workflows/attiny-sim-build.yml`); pushes to
-`master` also publish `web/` to the `gh-actions` branch for the jsDelivr link
-in the top-level README.
+`master` also publish `web/` to the `gh-actions` branch, which GitHub Pages serves at
+<https://ivan-marchand.github.io/openflaps/firmware/attiny84/sim/web/> (the live simulator link in the top-level README).
 
 The same two headers are exercised headless by the PlatformIO host suite in
 `../test-host/` (`python3 -m platformio test -e native`). This simulator adds a
