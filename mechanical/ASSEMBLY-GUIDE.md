@@ -199,14 +199,14 @@ The drum should now spin freely on the Limit Switch Support.
 Feed the switch's wire through the small hole at the base of the Frame's axle post, so
 it comes out on the back (−X) face, then lower the **wheel assembly (2)** onto the axle
 from the +X side, so the axle post seats in the Limit Switch Support. The flaps face the
-open front window. On the back face, lay the wire along the recess molded into it, and
-push it back into the case through the small hole at the end of the recess.
+open front window. On the back face, lay the wire in the diagonal slot molded into it, and
+push it back into the case through the small hole at the end of the slot.
 
 **From a real build:**
 
-| Wire through the axle hole | Wire along the recess in the back | Wheel on the axle, wire back inside |
+| Wire through the axle hole | Wire in the diagonal slot at the back | Wheel on the axle, wire back inside |
 |---|---|---|
-| ![Wire through the axle hole](images/photos/05b-wire-through-axle-hole.jpg) | ![Wire along the recess in the back](images/photos/05d-frame-back-wire-exit.jpg) | ![Wheel on the axle, wire back inside](images/photos/05e-wheel-in-frame-wire-routed-back.jpg) |
+| ![Wire through the axle hole](images/photos/05b-wire-through-axle-hole.jpg) | ![Wire in the diagonal slot at the back](images/photos/05d-frame-back-wire-exit.jpg) | ![Wheel on the axle, wire back inside](images/photos/05e-wheel-in-frame-wire-routed-back.jpg) |
 
 ## Step 7 — Install the motor
 
@@ -221,9 +221,6 @@ push it back into the case through the small hole at the end of the recess.
    +X side, shaft towards you, so its two ears lie against the inside of the −X wall
    over the nuts.
 3. Secure the motor's two ears with the two **M3×20 screws (2)** into the nuts.
-
-The diagonal slot in the Frame's −X wall is a screw slot ⚠️, presumably to adjust the
-motor position: check the gear mesh in the next step, then lock it.
 
 **From a real build:**
 
