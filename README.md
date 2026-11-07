@@ -114,4 +114,6 @@ docs/                 Design documents and implementation plans
 
 ## License
 
-[MIT](LICENSE)
+- **3D models** (`mechanical/stl/`, including the flaps): [CC BY-SA 4.0](mechanical/stl/LICENSE.md).
+  Print, share and modify them freely, with credit; modified models you share must use the same license.
+- **Everything else** (firmware, web UI, tools, PCB files): [MIT](LICENSE).

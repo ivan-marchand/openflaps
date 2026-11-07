@@ -6,7 +6,8 @@ Instructions for 3D printing and assembling the OpenFlaps character modules.
 
 ## Parts list
 
-All STLs are in `mechanical/stl/`.
+All STLs are in `mechanical/stl/`. The models are licensed
+[CC BY-SA 4.0](stl/LICENSE.md).
 
 <!-- BEGIN GENERATED PARTS (tools/generate_assembly_guide.py) -->
 ![Printed parts](images/01-printed-parts.png)
