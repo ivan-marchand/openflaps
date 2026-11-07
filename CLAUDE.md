@@ -16,8 +16,9 @@ firmware/pico/        # MicroPython: HTTP server, I2C master, web UI
 firmware/attiny84/    # Arduino C++: I2C slave, stepper motor control
 mechanical/stl/       # 3D-printable STL files
 mechanical/           # PRINT-GUIDE.md assembly instructions
+hardware/pcb/         # Gerbers + BOMs: controller (per character), daisy-chain (per 4), pico-controller
 frontend/             # Vite + Preact SPA (source for the web UI)
-tools/                # Python utility to generate character flap 3MF files
+tools/                # Python utilities: character flap 3MF generator, assembly guide generator
 docs/plans/           # Design docs and implementation plans
 ```
 
@@ -525,6 +526,15 @@ All three are gitignored.
 - ATtiny84: compile/upload via Arduino IDE with ATTinyCore, or `firmware/attiny84/upload.sh` (`arduino-cli`, macOS/Linux/Raspberry Pi; `--setup` once to install the pinned ATTinyCore 1.5.7, then USBasp by default; `--fuses` for a new chip, `--compile-only`, `--read-fuses`). Board options live in its `FQBN`; keep them in sync with `INSTALL-attiny84.md`.
 - Frontend: `npm run build` in `frontend/`
 - Tools: `python tools/generate_flaps.py`
+- Assembly guide: `python tools/generate_assembly_guide.py --character "Character Assembly.3mf"` (plus
+  `--four` / `--pico` for parts 2 and 3) regenerates `mechanical/images/`, `mechanical/ASSEMBLY-GUIDE.md` and
+  the parts block in `PRINT-GUIDE.md` after an STL or CAD change. The CAD assembly 3MFs are not in the repo;
+  `--no-images` / `--check` need none. Edit `tools/assembly_guide/assembly-guide.md.tmpl` for text; never
+  hand-edit `ASSEMBLY-GUIDE.md`. The fan of flaps in the figures shows the real printed characters from
+  the 45 flap 3MFs in `mechanical/stl/flaps/` (`tools/generate_flaps.py` output; `--flap-glyphs DIR`
+  points it at another set). Photos of a real build sit next to the figures; they are shrunk
+  copies in `mechanical/images/photos/`, re-imported with `--photos "path/to/photos"` (full-size originals
+  and the step notes live outside the repo, in the design folder's `build-log/`).
 
 ## Testing & Simulation
 

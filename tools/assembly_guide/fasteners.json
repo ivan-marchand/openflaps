@@ -1,0 +1,72 @@
+{
+ "character": [
+  {
+   "group": "switch-screws",
+   "name": "Socket button head screw M2x0.4 x 12",
+   "count": 2
+  },
+  {
+   "group": "switch-nuts",
+   "name": "Hex thin nut grade A & B M2",
+   "count": 2
+  },
+  {
+   "group": "wheel-screws",
+   "name": "Socket button head screw M2x0.4 x 8",
+   "count": 2
+  },
+  {
+   "group": "wheel-nuts",
+   "name": "Hex thin nut grade A & B M2",
+   "count": 2
+  },
+  {
+   "group": "motor-screws",
+   "name": "Socket button head screw M3x0.5 x 20",
+   "count": 2
+  },
+  {
+   "group": "motor-nuts",
+   "name": "Hex thin nut grade A & B M3",
+   "count": 2
+  },
+  {
+   "group": "corner-screws",
+   "name": "Socket button head screw M3x0.5 x 20",
+   "count": 4
+  },
+  {
+   "group": "corner-nuts",
+   "name": "Hex thin nut grade A & B M3",
+   "count": 4
+  }
+ ],
+ "four": [],
+ "pico": [
+  {
+   "group": "pico-pcb-screws",
+   "name": "Socket button head screw M3x0.5 x 8",
+   "count": 4
+  },
+  {
+   "group": "pico-corner-screws",
+   "name": "Socket button head screw M3x0.5 x 20",
+   "count": 4
+  },
+  {
+   "group": "pico-pcb-nuts",
+   "name": "Hex thin nut grade A & B M3",
+   "count": 4
+  },
+  {
+   "group": "pico-lid-screws",
+   "name": "Socket button head screw M3x0.5 x 20",
+   "count": 3
+  },
+  {
+   "group": "pico-lid-nuts",
+   "name": "Hex thin nut grade A & B M3",
+   "count": 3
+  }
+ ]
+}
