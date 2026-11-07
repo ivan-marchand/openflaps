@@ -570,9 +570,11 @@ All three are gitignored.
   `firmware/attiny84/split_flap_display_async/**`. Every run uploads the built
   `web/` directory as a GitHub Actions artifact. On `master` pushes only, it
   also force-publishes `web/` to the `gh-actions` branch (squashed, no
-  accumulated history) so jsDelivr can serve it directly — see the Features
-  list in `README.md`. That link only resolves once the repo is public;
-  jsDelivr's GitHub CDN doesn't fetch from private repos.
+  accumulated history), which GitHub Pages serves at
+  https://ivan-marchand.github.io/openflaps/firmware/attiny84/sim/web/ (Pages source: the
+  `gh-actions` branch, root; `.nojekyll` keeps Jekyll out of it). The Features
+  list in `README.md` links there. Not jsDelivr: it serves GitHub-hosted HTML
+  as plain text, so the page wouldn't render.
 
 ## Manual Testing (Pico / sketch)
 
