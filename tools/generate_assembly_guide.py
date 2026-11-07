@@ -173,10 +173,10 @@ FASTENER_GROUPS = [
     dict(id="switch-nuts", kind="nut", size="M2", x=(None, 0), note="In the hex pockets of the Limit Switch Support (step 3)."),
     dict(id="wheel-screws", kind="screw", size="M2", length=8, note="Fasten the Right Wheel to the Left Wheel (step 4)."),
     dict(id="wheel-nuts", kind="nut", size="M2", x=(0, None), note="In the pockets of the Left Wheel drum (step 4)."),
-    # "use": the part the guide lists, whatever the CAD has (an M3x12 fits too, but M3x20 keeps every
-    # case/motor screw the same)
+    # "use": the part the guide lists, whatever the CAD has (the Pico Case model still has M3x12 here;
+    # the real build uses M3x20)
     dict(id="motor-screws", kind="screw", size="M3", x=(None, 10), use="Socket button head screw M3x0.5 x 20",
-         note="Motor ears to the Frame (step 7). An M3×12 fits too."),
+         note="Motor ears to the Frame (step 7)."),
     dict(id="motor-nuts", kind="nut", size="M3", x=(None, 0), note="In the hex pockets on the outside of the Frame's −X wall (step 7)."),
     dict(id="corner-screws", kind="screw", size="M3", x=(10, None), note="Through each Front Connector Peg and Lid corner into the Frame (step 10)."),
     dict(id="corner-nuts", kind="nut", size="M3", x=(0, None), note="In the hex channels at the Frame's corners, from the back (−X) face (step 10)."),

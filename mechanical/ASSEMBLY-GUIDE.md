@@ -66,7 +66,7 @@ Pictures of each part are in [PRINT-GUIDE.md](PRINT-GUIDE.md#parts-list).
 | Hex thin nut grade A & B M2 | 2 per character | In the hex pockets of the Limit Switch Support (step 3). |
 | Socket button head screw M2x0.4 x 8 | 2 per character | Fasten the Right Wheel to the Left Wheel (step 4). |
 | Hex thin nut grade A & B M2 | 2 per character | In the pockets of the Left Wheel drum (step 4). |
-| Socket button head screw M3x0.5 x 20 | 2 per character | Motor ears to the Frame (step 7). An M3×12 fits too. |
+| Socket button head screw M3x0.5 x 20 | 2 per character | Motor ears to the Frame (step 7). |
 | Hex thin nut grade A & B M3 | 2 per character | In the hex pockets on the outside of the Frame's −X wall (step 7). |
 | Socket button head screw M3x0.5 x 20 | 4 per character | Through each Front Connector Peg and Lid corner into the Frame (step 10). |
 | Hex thin nut grade A & B M3 | 4 per character | In the hex channels at the Frame's corners, from the back (−X) face (step 10). |
