@@ -1,0 +1,30 @@
+/* firmware/attiny84/sim/web/sim.css */
+@import url('./_sfd.css');
+
+:root { color-scheme: dark; }
+body {
+  margin: 0; padding: 24px;
+  font: 14px/1.5 -apple-system, system-ui, sans-serif;
+  background: #14161a; color: #e8e8e8;
+}
+h1 { font-size: 1rem; letter-spacing: 0.1em; color: #888; font-weight: 600; }
+.sim-wrap { display: flex; flex-wrap: wrap; gap: 32px; align-items: flex-start; }
+.panel {
+  background: #1c1f24; border: 1px solid #2c2f36; border-radius: 8px;
+  padding: 16px; min-width: 240px;
+}
+.panel h2 { font-size: 0.7rem; letter-spacing: 0.08em; color: #888; margin: 0 0 12px; text-transform: uppercase; }
+.flap-stage { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+.btn {
+  background: #23262c; border: 1px solid #3a3d44; color: #e8e8e8;
+  padding: 6px 12px; border-radius: 5px; font: inherit; cursor: pointer;
+}
+.btn:active { background: #2e323a; }
+.module-btn { width: 120px; height: 44px; border-radius: 22px; }
+.inspector { display: grid; grid-template-columns: auto auto; gap: 4px 16px; font-family: ui-monospace, monospace; font-size: 0.8rem; }
+.inspector dt { color: #888; }
+.inspector dd { margin: 0; text-align: right; }
+.console { font-family: ui-monospace, monospace; font-size: 0.75rem; color: #9aa; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 140px; overflow-y: auto; }
+.row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+label { color: #888; font-size: 0.8rem; }
+input[type=number], select { background: #23262c; border: 1px solid #3a3d44; color: #e8e8e8; padding: 4px 6px; border-radius: 4px; font: inherit; width: 72px; }
