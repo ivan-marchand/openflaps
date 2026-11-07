@@ -14,11 +14,9 @@ Print the parts first — see [PRINT-GUIDE.md](PRINT-GUIDE.md).
 > **Status: Part 1 confirmed against a real build.** Its order, hardware and wire
 > routing follow an actual character assembled by hand; each step shows photos of that
 > build next to the CAD figure.
-> Part 2 shows photos of a real chain being joined; its steps still follow the *Daisy
-> Chain* CAD model. Part 3 follows the CAD only (*Pico Case* assembly): the order and
-> insertion directions were worked out from the model (positions, fits, interference
-> checks), not yet from a physical build. Anything marked ⚠️ is inferred, or missing from
-> the model, and worth checking against a real build.
+> Parts 2 and 3 show photos of a real build too; Part 3's order and cabling follow it.
+> Anything marked ⚠️ is inferred from the CAD, or missing from it, and worth checking
+> against a real build.
 
 ## Orientation
 
@@ -390,21 +388,56 @@ doesn't touch the wheel.
 
 ![Pico case](images/17-pico-case.png)
 
-1. Set the **Pico Case (1)** on the Lid of the first character and fasten it at the four
-   corners with the **M3×12 screws (2)**, from inside the case, into the corner
-   nuts already in the Frame.
-2. Drop the four **M3 nuts (3)** into the standoffs of the case (they sit inside, out of sight in the figure), set the **Pico PCB (4)**
+1. Drop the four **M3 nuts (3)** into the standoffs of the **Pico Case (1)** (they sit inside, out of sight in the figure), set the **Pico PCB (4)**
    on them with the Pico W in its sockets, and fasten it with the four
    **M3×8 screws (5)**.
-3. Drop the three **M3 nuts (6)** into the slots in the top, bottom and front walls of the case, put
+
+**From a real build:**
+
+| Parts | Pico PCB screwed in |
+|---|---|
+| ![Parts](images/photos/11a-pico-case-parts.jpg) | ![Pico PCB screwed in](images/photos/11b-pico-pcb-in-case.jpg) |
+
+2. Set the case on the Lid of the first character and fasten it at the four corners with the
+   **M3×12 screws (2)**, from inside the case, into the corner nuts in the Frame.
+
+**From a real build:**
+
+| Case and first character | Case on the first character | On the block of four |
+|---|---|---|
+| ![Case and first character](images/photos/11c-case-and-first-character.jpg) | ![Case on the first character](images/photos/11e-case-on-first-character.jpg) | ![On the block of four](images/photos/11f-case-on-block-of-four.jpg) |
+
+3. Connect the Pico PCB to the Backboard PCB at the back of the display: a two-wire power
+   cable from one of the Pico PCB's 5V outputs to the Backboard's **5V** connector, and the
+   I²C cable from the Pico PCB's I²C header to the Backboard's **I2CIN** header.
+
+**From a real build:**
+
+| Power and I²C cables to the Backboard |
+|---|
+| ![Power and I²C cables to the Backboard](images/photos/11g-cables-to-backboard.jpg) |
+
+4. Drop the three **M3 nuts (6)** into the slots in the top, bottom and front walls of the case, put
    on the **Pico Case Lid (7)**, with the "Open Flaps" lettering facing out, and fasten it
    with the three **M3×20 screws (8)**.
+
+**From a real build:**
+
+| Lid, screws and nuts | Lid on |
+|---|---|
+| ![Lid, screws and nuts](images/photos/11h-lid-parts.jpg) | ![Lid on](images/photos/11i-lid-closed.jpg) |
 
 ## Complete
 
 | Front | Back |
 |---|---|
 | ![Front](images/18a-display-front.png) | ![Back](images/18b-display-back.png) |
+
+**From a real build:**
+
+| The finished display | From the Pico case side |
+|---|---|
+| ![The finished display](images/photos/11k-finished-front.jpg) | ![From the Pico case side](images/photos/11j-finished-angled.jpg) |
 
 ## Then
 
