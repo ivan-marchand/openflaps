@@ -47,7 +47,8 @@ The [assembly guide](mechanical/ASSEMBLY-GUIDE.md#parts) has the full list, with
 - Pico Controller PCB ([Gerbers and BOM](hardware/pcb/pico-controller/)) and a 4-channel
   3.3 V ↔ 5 V I²C level shifter module
 - Printed Pico Case and Lid
-- 5 V power supply with a barrel plug
+- 5 V power supply with a 5.5 × 2.5 mm barrel plug, 3 A or more (each motor draws about 0.25 A
+  while it moves, and by default at most four move at once; a 5 A supply leaves plenty of headroom)
 - Optional: BME280 sensor for indoor temperature, humidity and pressure
 
 **Software**
