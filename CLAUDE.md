@@ -522,7 +522,7 @@ All three are gitignored.
 ## No Formal Build System
 
 - Pico: upload via `./firmware/pico/deploy.sh` (USB via `mpremote`, or `--ota [host]` over WiFi)
-- ATtiny84: compile/upload via Arduino IDE with ATTinyCore 1.5.2
+- ATtiny84: compile/upload via Arduino IDE with ATTinyCore, or `firmware/attiny84/upload.sh` (`arduino-cli`, macOS/Linux/Raspberry Pi; `--setup` once to install the pinned ATTinyCore 1.5.7, then USBasp by default; `--fuses` for a new chip, `--compile-only`, `--read-fuses`). Board options live in its `FQBN`; keep them in sync with `INSTALL-attiny84.md`.
 - Frontend: `npm run build` in `frontend/`
 - Tools: `python tools/generate_flaps.py`
 

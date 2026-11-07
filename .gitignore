@@ -40,3 +40,6 @@ firmware/pico/app.mpy
 
 # mpy-cross venv bootstrapped by deploy.sh
 firmware/pico/.mpy-cross-venv/
+
+# ATtiny84 firmware build output (upload.sh)
+firmware/attiny84/build/
