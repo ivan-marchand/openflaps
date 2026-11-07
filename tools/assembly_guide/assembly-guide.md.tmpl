@@ -15,8 +15,6 @@ Print the parts first — see [PRINT-GUIDE.md](PRINT-GUIDE.md).
 > routing follow an actual character assembled by hand; each step shows photos of that
 > build next to the CAD figure.
 > Parts 2 and 3 show photos of a real build too; Part 3's order and cabling follow it.
-> Anything marked ⚠️ is inferred from the CAD, or missing from it, and worth checking
-> against a real build.
 
 ## Orientation
 
