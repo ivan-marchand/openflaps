@@ -1186,8 +1186,7 @@ layout_tokens_cache = {}
 layout_required_width_cache = {}
 layout_align_cache = {}
 
-# Reminders -- see reminders.py and
-# docs/superpowers/specs/2026-09-26-reminders-design.md. Evaluated
+# Reminders -- see reminders.py. Evaluated
 # statelessly by evaluate_reminders() from tick() whenever the minute changes:
 # reminder times, durations and expiries are all whole minutes, so every
 # start/end falls on a minute boundary and finer checks would find nothing new.

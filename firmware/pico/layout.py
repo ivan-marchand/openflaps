@@ -2,8 +2,7 @@
 #
 # Template syntax: "{field}" (natural width), "{field:N}" (space-pad or
 # truncate to N), "{field:0N}" (zero-pad or truncate to N -- a leading '0'
-# in the width digits selects zero-padding). See
-# docs/plans/2026-09-16-layout-templates-design.md for the full design.
+# in the width digits selects zero-padding).
 
 ALIGNMENTS = ("left", "center", "right")
 
