@@ -19,7 +19,6 @@ mechanical/           # PRINT-GUIDE.md assembly instructions
 hardware/pcb/         # Gerbers + BOMs: controller (per character), daisy-chain (per 4), pico-controller
 frontend/             # Vite + Preact SPA (source for the web UI)
 tools/                # Python utilities: character flap 3MF generator, assembly guide generator
-docs/plans/           # Design docs and implementation plans
 ```
 
 ## Tech Stack
@@ -168,8 +167,6 @@ Any new route or background task must preserve these invariants:
   every `LED_I2C_RECHECK_INTERVAL`. That makes it up to 5 s stale, which is the
   accepted tradeoff — the alternative is a health check that stalls for the
   several seconds a display dispatch takes.
-
-Full rationale: `docs/superpowers/specs/2026-09-17-pico-async-concurrency-design.md`.
 
 ## Display Modes
 

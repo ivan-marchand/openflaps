@@ -107,7 +107,6 @@ mechanical/           Print and assembly guides, figures and build photos
 mechanical/stl/       3D-printable parts (STL) and the 45 flaps (3MF)
 hardware/pcb/         Gerbers and BOMs of the three PCBs
 tools/                Flap generator and assembly guide generator
-docs/                 Design documents and implementation plans
 ```
 
 ---
