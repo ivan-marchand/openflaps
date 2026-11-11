@@ -1,0 +1,36 @@
+# OpenFlaps {{VERSION}} — hardware kit
+
+OpenFlaps is a networked split-flap display you build yourself: 3D-printed characters,
+each driven by a small stepper motor and its own ATtiny84 board, chained to a Raspberry Pi
+Pico W controller with a web interface. Show the time, the date, the weather, reminders,
+or any text you like.
+
+## What's in this folder
+
+- `guides/`: the print guide and the assembly guide, as PDFs.
+- `stl/`: every 3D-printed part.
+- `stl/flaps/`: the 45 character flaps, as two-colour 3MF files (white characters on black).
+- `pcb/`: Gerbers, bills of materials and pick-and-place files for the three boards.
+- `photos/`: pictures of a finished display (when included).
+- `LICENSE-models.md` and `LICENSE`: the licenses (see below).
+
+## Where to start
+
+1. Read `guides/OpenFlaps-Print-Guide.pdf` and print the parts.
+2. Order the boards from `pcb/` (any PCB fab works; see `pcb/README.md`).
+3. Follow `guides/OpenFlaps-Assembly-Guide.pdf` step by step.
+
+## Firmware and software
+
+The firmware (Pico W and ATtiny84) and the web interface are not in this kit. Get them from
+the repository, at the same version as this kit:
+
+{{TAG_URL}}
+
+or the latest version at {{REPO_URL}}. The links in the assembly guide point there.
+
+## License
+
+- The 3D models, the guide PDFs and the photos are licensed under
+  [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/): see `LICENSE-models.md`.
+- The PCB files, and all the code in the repository, are under the MIT license: see `LICENSE`.
