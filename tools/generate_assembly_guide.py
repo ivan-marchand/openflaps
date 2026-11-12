@@ -96,8 +96,6 @@ PRINTED = [
     ("Pico Case", "Split Flap Character - Pico Case.stl", "1 per display", "14", (120, 190, 130)),
     ("Pico Case Lid", "Split Flap Character - Pico Case Lid.stl", "1 per display", "14", (70, 160, 100)),
 ]
-# STLs kept in mechanical/stl/ that this build doesn't use (the older gear pair), so no warning for them.
-NOT_IN_GUIDE = {"Gear - Stepper.stl", "Gear - Wheel.stl"}
 # 3MF bodies to ignore: the Rail is out of the design for now (its STL was removed).
 IGNORED_BODIES = {"Rail"}
 # Same, by the board tag EasyEDA ends a body's name with: the small board at the back of the Pico case,
@@ -900,7 +898,7 @@ def render_docs():
 def warn_unknown_stls():
     known = {f for _, f, *_ in PRINTED}
     for p in sorted(STL_DIR.glob("*.stl")):
-        if p.name not in known and p.name not in NOT_IN_GUIDE:
+        if p.name not in known:
             print(f"warning: {p.name} is in mechanical/stl/ but not in PRINTED; the guide ignores it",
                   file=sys.stderr)
     for f in sorted(known):
