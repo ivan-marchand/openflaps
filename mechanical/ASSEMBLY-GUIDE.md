@@ -48,9 +48,7 @@ Pictures of each part are in [PRINT-GUIDE.md](PRINT-GUIDE.md#parts-list).
 | `Split Flap Character - Pico Case.stl` | 1 per display | 14 |
 | `Split Flap Character - Pico Case Lid.stl` | 1 per display | 14 |
 
-`PCB Holder` is no longer used (the Lid has the holder built in). `Gear - Stepper` and
-`Gear - Wheel` (the older gear pair) are also in `mechanical/stl/`; this guide uses the
-30:50 set.
+`PCB Holder` is no longer used (the Lid has the holder built in).
 
 ### Not printed — per character
 
