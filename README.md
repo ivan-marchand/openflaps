@@ -4,7 +4,13 @@ An open-source, 3D-printed split-flap display. A Raspberry Pi Pico W runs a WiFi
 interface and drives any number of character modules over I²C; each module has its own
 ATtiny84 board and a 28BYJ-48 stepper motor that flips a wheel of 45 printed flaps.
 
-![A four-character OpenFlaps display](mechanical/images/photos/11k-finished-front.jpg)
+[![A 16-character OpenFlaps display on a shelf: watch the video](mechanical/images/catalog/03-three-quarter.jpg)](https://youtu.be/RAdpgOrNJik)
+
+**▶ [Watch it in action](https://youtu.be/RAdpgOrNJik)** (70 s) · **[Download the hardware kit](https://github.com/ivan-marchand/openflaps/releases/latest)**: STLs, flaps, guides as PDFs and PCB files
+
+| | | |
+|:-:|:-:|:-:|
+| ![The Pico W case at the end of the display](mechanical/images/catalog/01-endcap.jpg) | ![Close-up of the flaps](mechanical/images/catalog/05-flaps-closeup.jpg) | ![The back: daisy-chain boards and power leads](mechanical/images/catalog/06-back-wiring.jpg) |
 
 ---
 
@@ -26,6 +32,10 @@ ATtiny84 board and a 28BYJ-48 stepper motor that flips a wheel of 45 printed fla
 - **[Live simulator](https://ivan-marchand.github.io/openflaps/firmware/attiny84/sim/web/)**:
   try one character module in your browser, running the real ATtiny84 firmware logic, no
   hardware needed
+
+![The web UI: the control page and the layout editor](mechanical/images/catalog/07-web-ui.jpg)
+
+![Reminders in the web UI](mechanical/images/catalog/09-reminders.jpg)
 
 ---
 
@@ -85,7 +95,8 @@ wheel gives it a home position.
 ## Getting started
 
 1. [Print the parts](mechanical/PRINT-GUIDE.md); the flaps come ready to print in
-   [`mechanical/stl/flaps/`](mechanical/stl/flaps/)
+   [`mechanical/stl/flaps/`](mechanical/stl/flaps/). Each [release](https://github.com/ivan-marchand/openflaps/releases)
+   also has them in one zip, with both guides as PDFs and the PCB files
 2. [Order the PCBs](hardware/pcb/)
 3. [Flash the ATtiny84 firmware](firmware/attiny84/INSTALL-attiny84.md) on each Controller PCB,
    before it goes into its character
@@ -106,7 +117,7 @@ mcp-server/           MCP server so Claude can control the display
 mechanical/           Print and assembly guides, figures and build photos
 mechanical/stl/       3D-printable parts (STL) and the 45 flaps (3MF)
 hardware/pcb/         Gerbers and BOMs of the three PCBs
-tools/                Flap generator and assembly guide generator
+tools/                Flap generator, assembly guide generator, release script
 ```
 
 ---

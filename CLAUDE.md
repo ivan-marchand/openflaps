@@ -18,7 +18,7 @@ mechanical/stl/       # 3D-printable STL files
 mechanical/           # PRINT-GUIDE.md assembly instructions
 hardware/pcb/         # Gerbers + BOMs: controller (per character), daisy-chain (per 4), pico-controller
 frontend/             # Vite + Preact SPA (source for the web UI)
-tools/                # Python utilities: character flap 3MF generator, assembly guide generator
+tools/                # Python utilities: character flap 3MF generator, assembly guide generator, release script (builds to gitignored release/)
 ```
 
 ## Tech Stack
@@ -532,6 +532,18 @@ All three are gitignored.
   points it at another set). Photos of a real build sit next to the figures; they are shrunk
   copies in `mechanical/images/photos/`, re-imported with `--photos "path/to/photos"` (full-size originals
   and the step notes live outside the repo, in the design folder's `build-log/`).
+- Release: `tools/release.sh <version> [--dry-run]` (calendar version `YYYY.MM`, or `YYYY.MM.N` for a
+  second one in a month; used verbatim as the tag) builds the **hardware kit**
+  `release/<version>/openflaps-<version>.zip` — STLs, flap 3MFs, the two guides as PDFs (`markdown-pdf`,
+  pinned with a PyMuPDF version that has an Intel-Mac wheel, in the gitignored `tools/release/.venv/`), `hardware/pcb/`, both licenses, a start-here README
+  from `tools/release/README.md.tmpl`, and the catalog photos in `mechanical/images/catalog/` if any — plus
+  `release/<version>/catalog/` (the zip and loose STL/3MF/photo files for Thingiverse/Printables). Relative
+  links in the PDFs and the PCB README are rewritten to GitHub URLs at the tag (guide-to-guide links point to
+  the other PDF). No firmware is built: the kit points to the repo for that. Without `--dry-run`, it needs a
+  clean `master` in sync with `origin`, asks for confirmation, then tags, pushes the tag and runs
+  `gh release create --repo ivan-marchand/openflaps`. If that stops part-way (push or upload failed), re-running the
+  same version finishes it: an existing tag is accepted only when it marks HEAD and has no GitHub release yet. Logic lives in `tools/release/kit.py`; tests: `python3 -m unittest discover -s
+  tools/release`.
 
 ## Testing & Simulation
 
