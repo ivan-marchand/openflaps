@@ -47,3 +47,6 @@ firmware/attiny84/build/
 # Release builds (tools/release.sh) and its markdown-pdf venv
 /release/
 tools/release/.venv/
+
+# Vite dependency cache
+frontend/.vite/
