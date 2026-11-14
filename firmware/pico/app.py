@@ -984,21 +984,47 @@ def update_module_params(address, speed, offset, new_address):
 # ----------------------------
 # Claude API
 # ----------------------------
+CLAUDE_EXAMPLES = ("YES", "NO", "IDK", "RAIN", "COOL!", "NOT TODAY", "READ A BOOK",
+                   "GO FOR A WALK", "CALL A FRIEND", "BAKE SOMETHING!")
+
 def claude_system_prompt(count):
+    examples = [e for e in CLAUDE_EXAMPLES if len(e) <= count][-4:]
     return (
-        "You control a {0}-character split-flap display. "
-        "Reply with EXACTLY {0} characters using only these characters: "
-        "space A-Z 0-9 . , : - ! ? / degree-sign. "
-        "Pad with spaces if needed. "
-        "Examples: YES NO COOL IDK NOPE 42.0 RAIN SNOW (padded/truncated to {0} chars)"
-    ).format(count)
+        "You write messages for a split-flap display with {0} character slots. "
+        "Reply with one short message of AT MOST {0} characters, counting spaces. "
+        "If it would be longer, use fewer or shorter words rather than cutting "
+        "a word off. "
+        "Use only A-Z, 0-9, space and . , : - ! ? / and the degree sign. "
+        "No quotes, no explanation, no line breaks. "
+        "Examples that fit: {1}"
+    ).format(count, ", ".join(examples))
+
+def fit_to_display(text, count):
+    """Upper-cases text, keeps only display characters, and fits it to count
+    characters: words that don't fit are dropped from the end rather than cut
+    in half (a single word longer than the display is still hard-cut).
+    Pads with spaces to exactly count."""
+    text = "".join(c for c in text.upper() if c in DISPLAY_CHARSET or c in "\r\n\t")
+    words = text.split()
+    out = ""
+    for w in words:
+        candidate = w if not out else out + " " + w
+        if len(candidate) > count:
+            break
+        out = candidate
+    if not out and words:
+        out = words[0][:count]
+    return (out + " " * count)[:count]
+
+CLAUDE_NO_KEY_ERROR = "No Claude API key set. Add one on the Setup page."
 
 async def call_claude(prompt):
+    """Returns (text, None) on success, or (None, error message) on failure.
+    A failure never touches the display: the caller reports the error."""
+    if not api_key:
+        return None, CLAUDE_NO_KEY_ERROR
     async with mutation_lock:
         count = len(get_module_addresses())
-    if not api_key:
-        print("No Claude API key configured")
-        return ("ERR" + " " * count)[:count], False
 
     host = "api.anthropic.com"
     payload = ujson.dumps({
@@ -1018,38 +1044,53 @@ async def call_claude(prompt):
         "\r\n"
     ).format(host, api_key, len(payload))
 
+    request = headers.encode("utf-8") + payload
+    headers = payload = None
+    writer = None
     try:
+        # The TLS handshake needs a few tens of KB of heap in large blocks;
+        # without a collect first, a fragmented heap fails it with ENOMEM.
+        gc.collect()
         reader, writer = await asyncio.wait_for(
             asyncio.open_connection(host, 443, ssl=True), 15
         )
-        writer.write(headers.encode("utf-8") + payload)
+        writer.write(request)
+        request = None
         await writer.drain()
 
-        response = b""
+        chunks = []  # joined once at the end: repeated += fragments the heap
         while True:
             chunk = await asyncio.wait_for(reader.read(1024), 15)
             if not chunk:
                 break
-            response += chunk
-        writer.close()
-        try:
-            await writer.wait_closed()
-        except AttributeError:
-            pass
+            chunks.append(chunk)
+        response = b"".join(chunks)
+        chunks = None
 
         _, _, body = response.partition(b"\r\n\r\n")
+        response = None
         body = dechunk_http_body(body)
         data = ujson.loads(body)
 
         if "content" in data and data["content"]:
-            text = data["content"][0]["text"].upper()
-            text = "".join(c for c in text if c in DISPLAY_CHARSET)
-            return (text + " " * count)[:count], True
+            return fit_to_display(data["content"][0]["text"], count), None
         print("Claude error:", data)
-        return ("ERR" + " " * count)[:count], False
+        err = data.get("error") if isinstance(data, dict) else None
+        msg = err.get("message") if isinstance(err, dict) else None
+        return None, "Claude API error: {}".format(msg or "unexpected response")
     except Exception as e:
         print("Claude API error:", e)
-        return ("ERR" + " " * count)[:count], False
+        return None, "Couldn't reach Claude ({})".format(
+            "out of memory" if getattr(e, "errno", None) == 12 else repr(e))
+    finally:
+        if writer is not None:
+            # Always release the socket and its TLS buffers, even on error.
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
+        gc.collect()
 
 # ----------------------------
 # WiFi + NTP
@@ -1717,6 +1758,7 @@ async def handle_request(conn):
                 "char_per_row": char_per_row,
                 "active_layout": active_layout_name,
                 "temp_sensor_present": sensor is not None,
+                "claude_configured": bool(api_key),
                 "module_faults": module_faults_list(),
                 "reminder": {"id": shown_reminder_id, "text": last_text} if mode == MODE_REMINDER else None,
             })
@@ -1764,13 +1806,16 @@ async def handle_request(conn):
             data = parse_json_body(req)
             prompt = data.get("prompt", "").strip()
             if prompt:
+                prev_status = status_line
                 status_line = "Asking Claude..."
-                result, ok = await call_claude(prompt)
-                if not ok and mode == MODE_REMINDER:
-                    status_line = "Claude request failed; reminder kept"
-                    await async_http_send_json(conn, {"ok": False, "error": "Claude request failed."}, code="502 Bad Gateway")
+                result, err = await call_claude(prompt)
+                if err:
+                    # Leave the display (and any showing reminder) as it was.
+                    status_line = prev_status
+                    code = "400 Bad Request" if err == CLAUDE_NO_KEY_ERROR else "502 Bad Gateway"
+                    await async_http_send_json(conn, {"ok": False, "error": err}, code=code)
                     return
-                dismiss_showing_reminders()  # a successful call (or a failure outside reminder mode) replaces the showing reminder
+                dismiss_showing_reminders()  # a successful call replaces the showing reminder
                 last_text = result
                 mode = MODE_TEXT
                 async with mutation_lock:
