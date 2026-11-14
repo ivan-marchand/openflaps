@@ -66,6 +66,7 @@ export function SetupPage() {
   const [ssid, setSsid] = useState('')
   const [password, setPassword] = useState('')
   const [apiKey, setApiKey] = useState('')
+  const [claudeConfigured, setClaudeConfigured] = useState(null)
   const [zones, setZones] = useState([])
   const [selectedZone, setSelectedZone] = useState('')
   const [lat, setLat] = useState('')
@@ -109,6 +110,7 @@ export function SetupPage() {
       setActiveLayout(data.active_layout || '')
     }).catch(() => {})
     api.getLayoutFields().then(data => setLayoutFields(data.fields || [])).catch(() => {})
+    api.state().then(data => setClaudeConfigured(!!data.claude_configured)).catch(() => {})
   }, [])
 
   async function saveWifi(e) {
@@ -128,7 +130,7 @@ export function SetupPage() {
     try {
       const r = await api.saveApiKey(apiKey)
       setStatus(r.ok ? 'API key saved.' : r.error || 'Error.')
-      if (r.ok) setApiKey('')
+      if (r.ok) { setApiKey(''); setClaudeConfigured(true) }
     } finally { setBusy(false) }
   }
 
@@ -333,8 +335,20 @@ export function SetupPage() {
 
       <div class="display-card" style="margin-bottom:12px;">
         <div class="field-label">Claude API Key</div>
+        <div style="margin-bottom:10px;font-size:0.85em;opacity:0.7;">
+          Powers Ask Claude. To get a key, sign in to the{' '}
+          <a href="https://platform.claude.com/settings/keys" target="_blank" rel="noopener noreferrer" style="color:#f0a500;">Claude Console</a>,
+          add credits under Billing, then create a key under API Keys. API usage is billed separately from a Claude.ai subscription.
+        </div>
+        {claudeConfigured !== null && (
+          <div style="margin-bottom:10px;font-size:0.85em;opacity:0.7;">
+            {claudeConfigured
+              ? 'A key is saved. Enter a new one to replace it.'
+              : 'No key saved: Ask Claude is hidden until you add one.'}
+          </div>
+        )}
         <form onSubmit={saveKey}>
-          <input type="password" placeholder="sk-ant-..." value={apiKey} onInput={e => setApiKey(e.target.value)} autocomplete="off" />
+          <input type="password" placeholder={claudeConfigured ? 'sk-ant-... (saved)' : 'sk-ant-...'} value={apiKey} onInput={e => setApiKey(e.target.value)} autocomplete="off" />
           <div style="margin-top:10px;">
             <button class="btn" type="submit" disabled={busy || !apiKey}>SAVE API KEY</button>
           </div>

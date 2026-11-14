@@ -319,3 +319,7 @@ select {
   /* top/bottom halves with the black seam, like the display's tiles */
   background: linear-gradient(#3a3a3a 0 calc(50% - 0.5px), #000 calc(50% - 0.5px) calc(50% + 0.5px), #2c2c2c calc(50% + 0.5px));
 }
+
+.claude-error {
+  color: #ff8888;
+}

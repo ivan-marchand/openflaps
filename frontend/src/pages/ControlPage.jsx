@@ -9,6 +9,7 @@ export function ControlPage() {
   const [state, setState] = useState({ mode: '...', text: '    ', status: '', module_count: 4, char_per_row: -1, active_layout: '' })
   const [textInput, setTextInput] = useState('')
   const [claudeInput, setClaudeInput] = useState('')
+  const [claudeError, setClaudeError] = useState('')
   const [layouts, setLayouts] = useState([])
   const [busy, setBusy] = useState(false)
 
@@ -45,10 +46,12 @@ export function ControlPage() {
 
   function askClaude() {
     if (busy || !claudeInput) return
+    setClaudeError('')
     withBusy(() => api.askClaude(claudeInput).then(r => {
       if (r.ok) { setState(s => ({ ...s, text: r.text || s.text, status: r.status })); setClaudeInput('') }
+      else setClaudeError(r.error || 'Claude request failed.')
       return r
-    }))
+    }).catch(() => setClaudeError("Couldn't reach the display.")))
   }
 
   return (
@@ -104,19 +107,24 @@ export function ControlPage() {
           {textInput.length} / {state.module_count} characters
         </div>
 
-        <div class="field-label" style="margin-top:10px;">Ask Claude</div>
-        <div class="input-row">
-          <input
-            type="text"
-            placeholder="Are you smart?"
-            value={claudeInput}
-            onInput={e => setClaudeInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && askClaude()}
-          />
-          <button class="btn" disabled={busy || !claudeInput} onClick={askClaude}>
-            ASK
-          </button>
-        </div>
+        {state.claude_configured && (
+          <>
+            <div class="field-label" style="margin-top:10px;">Ask Claude</div>
+            <div class="input-row">
+              <input
+                type="text"
+                placeholder="Are you smart?"
+                value={claudeInput}
+                onInput={e => { setClaudeInput(e.target.value); setClaudeError('') }}
+                onKeyDown={e => e.key === 'Enter' && askClaude()}
+              />
+              <button class="btn" disabled={busy || !claudeInput} onClick={askClaude}>
+                ASK
+              </button>
+            </div>
+            {claudeError && <div class="char-count claude-error" style="margin-top:-6px;">{claudeError}</div>}
+          </>
+        )}
 
         <div class="mode-buttons" style="margin-top:14px;">
           <select
