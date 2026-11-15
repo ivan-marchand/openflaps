@@ -16,7 +16,7 @@ firmware/pico/        # MicroPython: HTTP server, I2C master, web UI
 firmware/attiny84/    # Arduino C++: I2C slave, stepper motor control
 mechanical/stl/       # 3D-printable STL files
 mechanical/           # PRINT-GUIDE.md assembly instructions
-hardware/pcb/         # Gerbers + BOMs: controller (per character), daisy-chain (per 4), pico-controller
+hardware/pcb/         # Gerbers, BOMs, pick-and-place, schematics, renders: controller (per character), daisy-chain (per 4), pico-controller
 frontend/             # Vite + Preact SPA (source for the web UI)
 tools/                # Python utilities: character flap 3MF generator, assembly guide generator, release script (builds to gitignored release/)
 ```

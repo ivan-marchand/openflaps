@@ -56,7 +56,7 @@ Pictures of each part are in [PRINT-GUIDE.md](PRINT-GUIDE.md#parts-list).
 |---|---|---|
 | 28BYJ-48 stepper motor | 1 per character | Shaft points +X. Ear holes are 35 mm apart, matching the two nut pockets in the Frame. |
 | Micro limit switch | 1 per character | Sits on the Limit Switch Support. |
-| Character PCB | 1 per character | ATtiny84 board. Gerbers and BOM: [`hardware/pcb/controller/`](../hardware/pcb/controller/). |
+| Character PCB | 1 per character | ATtiny84 board. Gerbers, BOM and pick-and-place file: [`hardware/pcb/controller/`](../hardware/pcb/controller/). |
 | Small cable, switch to PCB | 1 per character | Two wires. Not in the CAD yet. |
 | Socket button head screw M2x0.4 x 12 | 2 per character | Mount the micro limit switch on the Limit Switch Support (step 3). |
 | Hex thin nut grade A & B M2 | 2 per character | In the hex pockets of the Limit Switch Support (step 3). |
@@ -71,9 +71,9 @@ Pictures of each part are in [PRINT-GUIDE.md](PRINT-GUIDE.md#parts-list).
 
 | Item | Qty | Notes |
 |---|---|---|
-| Backboard PCB | 1 per set of 4 | 138 mm long = 4 × 34.5 mm. Gerbers and BOM: [`hardware/pcb/daisy-chain/`](../hardware/pcb/daisy-chain/). |
-| Pico PCB with Pico W | 1 per display | Pico W on 2.54 mm female headers; DC barrel jack for power. Gerbers and BOM: [`hardware/pcb/pico-controller/`](../hardware/pcb/pico-controller/). |
-| I²C logic level converter | 1 per display | Plugs into the Pico PCB: a 4-channel 3.3 V ↔ 5 V bi-directional I²C level shifter module, e.g. [this one](https://www.amazon.com/dp/B08C9PFVGP). |
+| Backboard PCB | 1 per set of 4 | 138 mm long = 4 × 34.5 mm. Gerbers, BOM and pick-and-place file: [`hardware/pcb/daisy-chain/`](../hardware/pcb/daisy-chain/). |
+| Pico PCB with Pico W | 1 per display | Pico W and the I²C level converter both plug into 2.54 mm female headers on the board; DC barrel jack for power. Gerbers, BOM and pick-and-place file: [`hardware/pcb/pico-controller/`](../hardware/pcb/pico-controller/). |
+| I²C logic level converter | 1 per display | Plugs into the two female headers on the Pico PCB, no soldering to the board: a 4-channel 3.3 V ↔ 5 V bi-directional I²C level shifter module, e.g. [this one](https://www.amazon.com/dp/B08C9PFVGP). Solder the module's own male pin headers if they come loose in the bag. |
 | 5 V power supply | 1 per display | Barrel plug 5.5 × 2.5 mm into the Pico PCB's 5V-IN jack; 3 A or more. |
 | Power cable, Pico PCB to Backboard | 1 per block of 4 | 2 wires, JST XH connector at each end. |
 | I²C cable, Pico PCB to Backboard | 1 per display | 2 wires, 2.54 mm pitch connector at each end. |
@@ -82,6 +82,17 @@ Pictures of each part are in [PRINT-GUIDE.md](PRINT-GUIDE.md#parts-list).
 | Hex thin nut grade A & B M3 | 4 per display | In the Pico Case standoffs, under the Pico PCB (step 14). |
 | Socket button head screw M3x0.5 x 20 | 3 per display | Hold the Pico Case Lid, at its top, bottom and front (step 14). |
 | Hex thin nut grade A & B M3 | 3 per display | In the slots in the Pico Case walls, behind the lid screws (step 14). |
+
+### Tools and consumables
+
+| Item | Needed for | Notes |
+|---|---|---|
+| Crimping tool for 2.54 mm Dupont and JST XH contacts | Limit switch connector (step 9), the cables to the Backboard (step 14) | A ratcheting crimper with dies for both, often sold as a kit with the contacts. |
+| 2.54 mm Dupont housings and female crimp pins | Limit switch connector, I²C cable | Assorted kit. Pre-made 2.54 mm jumper cables work for the I²C cable too. |
+| JST XH housings and crimp pins (2-pin) | Power cables, Pico PCB to Backboard | Assorted kit, or buy pre-made JST XH 2-pin cables of the right length. |
+| ICSP programmer (USBasp, or an Arduino as ISP) | Flashing the ATtiny84 on every Character PCB (step 9) | See [INSTALL-attiny84.md](../firmware/attiny84/INSTALL-attiny84.md). |
+| Soldering iron and solder | Limit switch wires (step 1); the through-hole parts on the PCBs if you don't have the fab assemble them | All three PCBs can be fab-assembled; see [`hardware/pcb/`](../hardware/pcb/README.md#ordering). |
+| Wire cutters and strippers | Cutting and stripping the switch and power wires | |
 
 ---
 
