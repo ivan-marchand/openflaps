@@ -21,6 +21,10 @@ their manufacturer part numbers, also in the BOMs.
   SMD capacitors). For fab assembly, upload the BOM and the pick-and-place file
   (`PickAndPlace_PCB_Controller.xlsx`) with the Gerbers; to assemble it yourself, the
   Gerbers include the top paste layer for a stencil.
+  The motor connector (`STEPPER`) is a JST XH 5-pin vertical header. Its BOM line lists
+  JST's own B5B-XH-A (LCSC C157991) because the clone the board was designed with
+  (C9900017328) went out of stock. The footprint name keeps the clone's 2.54 mm pitch; the
+  XH's 2.5 mm pitch fits it.
 - **Pico Controller**: the I²C logic level converter (`I2CConverter` in the BOM) is a
   plug-in module, not an LCSC part: a common 4-channel bi-directional 3.3 V ↔ 5 V I²C
   level shifter board with a 6-pin header on each side, e.g.
