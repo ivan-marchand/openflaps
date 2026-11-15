@@ -45,19 +45,19 @@ The [assembly guide](mechanical/ASSEMBLY-GUIDE.md#parts) has the full list, with
 
 **Per character**
 - 3D-printed parts: Frame, wheels, 45 flaps, gears, Lid (see the [print guide](mechanical/PRINT-GUIDE.md))
-- Controller PCB, with the ATtiny84 and stepper driver ([Gerbers and BOM](hardware/pcb/controller/))
+- Controller PCB, with the ATtiny84 and stepper driver ([Gerbers, BOM, pick-and-place, schematic](hardware/pcb/controller/))
 - 28BYJ-48 5 V stepper motor
 - Micro limit switch, with about 20 cm of 2-wire cable
 - M2 and M3 screws and nuts
 
 **Per block of four characters**
-- Daisy Chain backboard PCB ([Gerbers and BOM](hardware/pcb/daisy-chain/))
+- Daisy Chain backboard PCB ([Gerbers, BOM, pick-and-place, schematic](hardware/pcb/daisy-chain/))
 - Character Attachment Clips (printed)
 - 5 V power cable (JST XH)
 
 **Per display**
 - Raspberry Pi Pico W
-- Pico Controller PCB ([Gerbers and BOM](hardware/pcb/pico-controller/)) and a 4-channel
+- Pico Controller PCB ([Gerbers, BOM, pick-and-place, schematic](hardware/pcb/pico-controller/)) and a 4-channel
   3.3 V ↔ 5 V I²C level shifter module
 - Printed Pico Case and Lid
 - 5 V power supply with a 5.5 × 2.5 mm barrel plug, 3 A or more (each motor draws about 0.25 A
@@ -97,7 +97,7 @@ wheel gives it a home position.
 1. [Print the parts](mechanical/PRINT-GUIDE.md); the flaps come ready to print in
    [`mechanical/stl/flaps/`](mechanical/stl/flaps/). Each [release](https://github.com/ivan-marchand/openflaps/releases)
    also has them in one zip, with both guides as PDFs and the PCB files
-2. [Order the PCBs](hardware/pcb/)
+2. [Order the PCBs](hardware/pcb/README.md#ordering): all three can be fab-assembled
 3. [Flash the ATtiny84 firmware](firmware/attiny84/INSTALL-attiny84.md) on each Controller PCB,
    before it goes into its character
 4. [Assemble the characters, chain them, and add the Pico case](mechanical/ASSEMBLY-GUIDE.md)
@@ -116,7 +116,7 @@ frontend/             Vite + Preact source of the web UI
 mcp-server/           MCP server so Claude can control the display
 mechanical/           Print and assembly guides, figures and build photos
 mechanical/stl/       3D-printable parts (STL) and the 45 flaps (3MF)
-hardware/pcb/         Gerbers and BOMs of the three PCBs
+hardware/pcb/         Gerbers, BOMs, pick-and-place files and schematics of the three PCBs
 tools/                Flap generator, assembly guide generator, release script
 ```
 
