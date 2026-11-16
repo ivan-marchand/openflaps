@@ -47,7 +47,10 @@ Per board:
 
 - **Controller** has surface-mount parts (SOIC-14 ATtiny84, SOP-16 ULN2003, 0603 resistor,
   SMD capacitors) and through-hole connectors, all on the top side. To assemble it yourself, the
-  Gerbers include the top paste layer for a stencil.
+  Gerbers include the top paste layer for a stencil. The stepper connector is a JST XH 5-pin
+  (`B5B-XH-A`, LCSC C157991); you can also leave it out of the fab order and solder any 5-pin
+  XH vertical header (2.5 mm pitch) yourself. Its footprint has the pads 2.54 mm apart, which the
+  holes easily absorb.
 - **Daisy Chain** is through-hole only, with parts on **both sides**: the `5V` JST XH power
   connector is on the bottom, everything else on the top. Pick two-sided assembly on the quote.
   It's also easy to hand-solder: that's how the author built theirs.
@@ -60,11 +63,11 @@ Per board:
   pin headers onto it if they come loose. The Pico Controller is also simple enough to mill on a
   home CNC router and solder by hand, which is what the author did.
 
-**Check the part numbers on the quote.** Some BOM lines use EasyEDA's own `C99…` supplier
-numbers rather than a regular LCSC part, e.g. `C9900002556` (the 5 V outputs on the Pico
-Controller) and `C9900017328` (the stepper connector on the Controller). Stock and availability
-change; if the fab can't match a part, or shows it out of stock, pick an equivalent with the same
-footprint (the BOM's `Footprint` column), or leave it out and solder it yourself.
+**Check the part numbers on the quote.** One BOM line uses EasyEDA's own `C99…` supplier
+number rather than a regular LCSC part: `C9900002556`, the 5 V outputs on the Pico Controller.
+Stock and availability change; if the fab can't match a part, or shows it out of stock, pick an
+equivalent with the same footprint (the BOM's `Footprint` column), or leave it out and solder it
+yourself.
 
 Flash the ATtiny84 on each Controller before the board goes into its character, through the
 ICSP header; see [INSTALL-attiny84.md](../../firmware/attiny84/INSTALL-attiny84.md). The tools
